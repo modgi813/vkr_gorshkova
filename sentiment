@@ -1,0 +1,1580 @@
+library(tseries)
+library(forecast)
+library(fpp)
+library(caret)
+library(randomForest)
+library(ModelMetrics)
+library(e1071)
+library(pscl)
+library(extrafont)
+library(gt)
+library(gtsummary)
+library(modelsummary)
+
+#Загрузим акцию и посчитаем доходность, чтобы дальше свести в одну таблицу все 
+bmw <- read.csv("Downloads/Data/Day/BMW.DE.csv")
+bmw$Date <- as.Date(bmw$Date)
+bmw$Price <- (bmw$Open + bmw$Close)/2
+bmw_diff <- diff(bmw$Price)
+bmw_diff <- ifelse(bmw_diff > 0, 1, -1)
+bmw_y_ok <- diff(bmw$Price)/na.omit(lag(bmw$Price, 1))
+bmw <- bmw[-1,]
+bmw <- cbind(bmw, bmw_y_ok, bmw_diff)
+bmw <- na.omit(bmw)
+
+#Теперь оставим только дату, доходность и бинарную переменную
+bmw_ok <- bmw[, c(1, 9, 10)]
+bmw_sent_ok <- left_join(bmw_ok, bmw_senti_sent, by = "Date")
+head(bmw_sent_ok)
+
+#7 лагов сентимента
+colnames(bmw_sent_ok)[4] <- "sent"
+colnames(bmw_sent_ok)[2] <- "yield"
+colnames(bmw_sent_ok)[3] <- "bin"
+bmw_sent_ok$sent_1 <- lag(bmw_sent_ok$sent, 1)
+bmw_sent_ok$sent_2 <- lag(bmw_sent_ok$sent, 2)
+bmw_sent_ok$sent_3 <- lag(bmw_sent_ok$sent, 3)
+bmw_sent_ok$sent_4 <- lag(bmw_sent_ok$sent, 4)
+bmw_sent_ok$sent_5 <- lag(bmw_sent_ok$sent, 5)
+bmw_sent_ok$sent_6 <- lag(bmw_sent_ok$sent, 6)
+bmw_sent_ok$sent_7 <- lag(bmw_sent_ok$sent, 7)
+bmw_sent_ok <- replace(bmw_sent_ok, is.na(bmw_sent_ok), 0)
+head(bmw_sent_ok)
+
+#Проверка на стационарность ряда - он показал выдачу, стационарный
+adf.test(bmw_sent_ok$yield)
+ggplot(data = bmw_sent_ok, aes(x = Date , y = yield)) + geom_line() +
+  ylab("Дневная доходность акции") + xlab("Дата") + ggtitle("График дневной доходности акции Ниссан") + 
+  theme(
+    plot.title = element_text(size=15,  face="bold"), 
+    axis.text = element_text(size=8,  face = "plain"),
+    axis.title.x = element_text(size=11,face="plain"),
+    axis.title.y = element_text(size=12, face="plain")) + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  theme(plot.title = element_text(vjust = 2)) + 
+  theme(text = element_text(family = "Times New Roman"))
+
+####  Модели на доходностях - всех ####
+#Арима по всем переменным
+bmw_x_sent <-  bmw_sent_ok[,c(4:11)]
+mod_sent <- auto.arima(bmw_sent_ok$yield, xreg = as.matrix(bmw_x_sent[c(2)])) #тут проинтегрировал
+summary(mod_sent)
+mod_sent_1 <- Arima(bmw_sent_ok$yield,order = c(1, 0, 0), xreg = as.matrix(bmw_x_sent[, c(2)]))
+summary(mod_sent_1)
+
+#Собираем все в таблицу 
+mod_full_arima <- unlist(mod_sent_1$coef, recursive = TRUE, use.names = TRUE)
+sd_full_arima <- unlist(sqrt(diag(mod_sent_1$var.coef)), recursive = TRUE, use.names = TRUE) 
+table_bmw_full_arima <- data.frame(mod_full_arima, sd_full_arima)
+
+#Итоговая таблица по всей Ариме 
+table_bmw_full_arima$t_stat <- table_bmw_full_arima$mod_full_arima/table_bmw_full_arima$sd_full_arima
+table_bmw_full_arima$t_stat <- round(table_bmw_full_arima$t_stat, 5)
+table_bmw_full_arima$pi_val <- round(pnorm(-abs(table_bmw_full_arima$t_stat))*2, 5)
+colnames(table_bmw_full_arima)[1] <- "estimate"
+colnames(table_bmw_full_arima)[2] <- "sd"
+table_bmw_full_arima <- round(table_bmw_full_arima, 6)
+table_bmw_full_arima
+
+#Это чтобы чистить Ариму дальше
+table_bmw_full_arima_to_del <- table_bmw_full_arima %>%  arrange(desc(abs(t_stat)))
+table_bmw_full_arima_to_del
+
+#Урезанная Арима 
+mod_sent_final <- Arima(bmw_sent_ok$yield, order = c(1, 0, 0), xreg = as.matrix(bmw_x_sent[, c(2)]))
+summary(mod_sent_final)
+
+
+#Собираем все в таблицу 
+mod_ok_arima <- unlist(mod_sent_final$coef, recursive = TRUE, use.names = TRUE)
+sd_ok_arima <- unlist(sqrt(diag(mod_sent_final$var.coef)), recursive = TRUE, use.names = TRUE) 
+table_bmw_ok_arima <- data.frame(mod_ok_arima, sd_ok_arima)
+
+#Итоговая таблица по значимой Ариме 
+table_bmw_ok_arima$t_stat <- round(table_bmw_ok_arima$mod_ok_arima/table_bmw_ok_arima$sd_ok_arima, 5)
+table_bmw_ok_arima$pi_val <- round(pnorm(-abs(table_bmw_ok_arima$t_stat))*2, 5)
+colnames(table_bmw_ok_arima)[1] <- "estimate"
+colnames(table_bmw_ok_arima)[2] <- "sd"
+len <- length(table_bmw_ok_arima$estimate)
+table_bmw_ok_arima[len+1,] <- mod_sent_final$aic
+table_bmw_ok_arima[(len+2),] <- mod_sent_final$bic
+table_bmw_ok_arima[(len+3),] <- mod_sent_final$nobs
+table_bmw_ok_arima <- round(table_bmw_ok_arima, 6)
+rownames(table_bmw_ok_arima)[len+1] <- "AIC"
+rownames(table_bmw_ok_arima)[len+2] <- "BIC"
+rownames(table_bmw_ok_arima)[len+3] <- "n.obs"
+table_bmw_ok_arima
+
+#Выгрузим значимую Ариму 
+table_arima_bmw <- table_bmw_ok_arima %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Арима-модель для компании Ниссан")
+  ) %>% 
+  fmt_number (
+    columns = everything(), 
+    rows = everything(), 
+    decimals = 6
+  )
+gtsave(table_arima_bmw, filename = 'arima_bmw.html')
+
+
+#Дальше делим на трейн и тест и строим предикты по Ариме - в выгрузку только кортест 
+train <- bmw_sent_ok[1:707,]
+test <- bmw_sent_ok[708:1007,]
+bmw_x_train_arima <-  train[,c(4:11)]
+bmw_x_test_arima <-  test[,c(4:11)]
+
+mod_sent_11_train <- Arima(train$yield, order = c(0, 0, 1), xreg = as.matrix(bmw_x_train_arima[,c(7)]))
+summary(mod_sent_11_train)
+pred_arima <-  predict(mod_sent_11_train, newxreg = as.matrix(bmw_x_test_arima[, c(7)]))
+cor_pred_arima <- cor.test(pred_arima$pred, test$yield, conf.level = 0.9) 
+
+#Делаем таблицу с результатом теста  
+int_a_arima <- cor_pred_arima$conf.int[1]
+int_b_arima <- cor_pred_arima$conf.int[2]
+cor_arima <- cor_pred_arima$estimate
+pv_arima <- cor_pred_arima$p.value
+table_cortest_arima <- data.frame(int_a_arima, int_b_arima, cor_arima, pv_arima)
+rownames(table_cortest_arima)[1] <- 'bmw'
+table_cortest_arima
+
+table_arima_bmw_pred <- table_cortest_arima %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Корреляция прогнозов по Ариме и истинных значений Ниссан")
+  ) %>% 
+  fmt_number (
+    columns = everything(), 
+    rows = everything(), 
+    decimals = 6
+  )
+gtsave(table_arima_bmw_pred, filename = 'arima_pred_bmw.html')
+
+#Потом фильтруем по большим доходностям 
+k <- median(abs(bmw_sent_ok$yield))
+bmw_sent_ok_1 <- filter(bmw_sent_ok, yield > k |yield < -k)
+train_lm <- bmw_sent_ok_1[1:round(length(bmw_sent_ok_1$yield)*0.7),]
+test_lm <- bmw_sent_ok_1[(round(length(bmw_sent_ok_1$yield)*0.7)+1):length(bmw_sent_ok_1$yield),]
+length(train_lm$yield)
+length(test_lm$yield)
+
+mod_train <- lm(yield ~ sent + sent_1 + sent_2 + sent_3 + sent_4 + sent_5 + sent_6 + sent_7, data = train_lm)
+mod_aic <- stepAIC(mod_train)
+
+mod_train_1 <- lm(mod_aic$call, data = train_lm)
+summary(mod_train_1)
+pred_1 <- predict(mod_train_1, newdata = test_lm)
+cor_big_lm <- cor.test(pred_1, test_lm$yield, conf.level = 0.90)
+
+#Кортест линейная модель по большим доходностям 
+int_a_lm <- cor_big_lm$conf.int[1]
+int_b_lm <- cor_big_lm$conf.int[2]
+cor_lm <- cor_big_lm$estimate
+pv_lm <- cor_big_lm$p.value
+table_cortest_big_lm <- data.frame(int_a_lm, int_b_lm, cor_lm, pv_lm)
+rownames(table_cortest_big_lm)[1] <- 'bmw'
+table_cortest_big_lm
+
+table_lm_big_bmw_pred <- table_cortest_big_lm %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Корреляция прогнозов по линейной модели на больших доходностях и истинных значений Ниссан")
+  ) %>% 
+  fmt_number (
+    columns = everything(), 
+    rows = everything(), 
+    decimals = 6
+  )
+gtsave(table_lm_big_bmw_pred, filename = 'lm_pred_bmw_big.html')
+
+#Теперь модель опорных векторов - вначале добавим в исходный датасет лаги 
+bmw_sent_ok_lag <- bmw_sent_ok
+bmw_sent_ok_lag$yield_1 <- lag(bmw_sent_ok_lag$yield, 1)
+bmw_sent_ok_lag$yield_2 <- lag(bmw_sent_ok_lag$yield, 2)
+bmw_sent_ok_lag <- na.omit(bmw_sent_ok_lag)
+bmw_sent_ok_lag$bin <- as.factor(bmw_sent_ok_lag$bin)
+head(bmw_sent_ok_lag)
+
+train_ml <- bmw_sent_ok_lag[1:705,]
+test_ml <- bmw_sent_ok_lag[706:1014,]
+
+#только новости - модель из Арима спецификации
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_sent_1_4_lin <- train(yield ~ sent_1 + sent_6, data = train_ml,  method = "svmLinear", trControl = Control)
+predict_svm_l <- predict(object=mod_sent_1_4_lin, newdata=test_ml)
+news_arima_l <- cor.test(test_ml$yield, predict_svm_l, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_4_pol <- train(yield ~ sent_1 + sent_6, data = train_ml,   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p <- predict(object=mod_sent_1_4_pol, newdata=test_ml)
+news_arima_p <- cor.test(test_ml$yield, predict_svm_p, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_4_rad <- train(yield ~ sent_1 + sent_6, data = train_ml,  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r <- predict(object=mod_sent_1_4_rad, newdata=test_ml)
+news_arima_r <- cor.test(test_ml$yield, predict_svm_r, conf.level = 0.90)
+
+#только новости - модель лаг1 - лаг5
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_sent_1_5_lin <- train(y = train_ml$yield, x = train_ml[,5:9],  method = "svmLinear", trControl = Control)
+predict_svm_l <- predict(object=mod_sent_1_5_lin, newdata=test_ml[,5:9])
+news_1_5_l <- cor.test(test_ml$yield, predict_svm_l, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_5_pol <- train(y = train_ml$yield, x = train_ml[,5:9],   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p <- predict(object = mod_sent_1_5_pol, newdata=test_ml[,5:9])
+news_1_5_p <- cor.test(test_ml$yield, predict_svm_p, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_5_rad <- train(y = train_ml$yield, x = train_ml[,5:9],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r <- predict(object=mod_sent_1_5_rad, newdata=test_ml[,5:9])
+news_1_5_r <- cor.test(test_ml$yield, predict_svm_r, conf.level = 0.90)
+
+#только новости - модель текущий - лаг7
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_sent_0_7_lin <- train(y = train_ml$yield, x = train_ml[,4:11],  method = "svmLinear", trControl = Control)
+predict_svm_l <- predict(object=mod_sent_0_7_lin, newdata=test_ml[,4:11])
+news_0_7_l <- cor.test(test_ml$yield, predict_svm_l, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_0_7_pol <- train(y = train_ml$yield, x = train_ml[,4:11],   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p <- predict(object = mod_sent_0_7_pol, newdata=test_ml[,4:11])
+news_0_7_p <- cor.test(test_ml$yield, predict_svm_p, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_0_7_rad <- train(y = train_ml$yield, x = train_ml[,4:11],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r <- predict(object=mod_sent_0_7_rad, newdata=test_ml[,4:11])
+news_0_7_r <- cor.test(test_ml$yield, predict_svm_r, conf.level = 0.90)
+
+#Таблица по результатам 
+int_a_svm_n <- c(news_0_7_l$conf.int[1], news_0_7_p$conf.int[1], news_0_7_r$conf.int[1],
+                 news_1_5_l$conf.int[1], news_1_5_p$conf.int[1], news_1_5_r$conf.int[1],
+                 news_arima_l$conf.int[1], news_arima_p$conf.int[1], news_arima_r$conf.int[1])
+
+int_b_svm_n <- c(news_0_7_l$conf.int[2], news_0_7_p$conf.int[2], news_0_7_r$conf.int[2],
+                 news_1_5_l$conf.int[2], news_1_5_p$conf.int[2], news_1_5_r$conf.int[2],
+                 news_arima_l$conf.int[2], news_arima_p$conf.int[2], news_arima_r$conf.int[2])
+
+cor_svm_n <- c(news_0_7_l$estimate, news_0_7_p$estimate, news_0_7_r$estimate,
+               news_1_5_l$estimate, news_1_5_p$estimate, news_1_5_r$estimate,
+               news_arima_l$estimate, news_arima_p$estimate, news_arima_r$estimate)
+
+pv_svm_n <- c(news_0_7_l$p.value, news_0_7_p$p.value, news_0_7_r$p.value,
+              news_1_5_l$p.value, news_1_5_p$p.value, news_1_5_r$p.value,
+              news_arima_l$p.value, news_arima_p$p.value, news_arima_r$p.value)
+
+kernel_svm <- c('Linear', 'Poly', 'Radial', 
+                'Linear', 'Poly', 'Radial', 
+                'Linear', 'Poly', 'Radial')
+table_cortest_news_svm <- data.frame(kernel_svm, int_a_svm_n, int_b_svm_n, cor_svm_n, pv_svm_n)
+
+rownames(table_cortest_news_svm)[1] <- 'Полная'
+rownames(table_cortest_news_svm)[4] <- 'Усеченная'
+rownames(table_cortest_news_svm)[7] <- 'Значимая'
+
+table_cortest_news_svm$int_a_svm_n <- round(table_cortest_news_svm$int_a_svm_n, 4)
+table_cortest_news_svm$int_b_svm_n <- round(table_cortest_news_svm$int_b_svm_n, 4)
+table_cortest_news_svm$cor_svm_n <- round(table_cortest_news_svm$cor_svm_n, 4)
+table_cortest_news_svm$pv_svm_n <- round(table_cortest_news_svm$pv_svm_n, 4)
+
+table_cortest_news_svm
+
+#Выгрузим такую красоту 
+table_svm_bmw_news_only <- table_cortest_news_svm %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование метода опорных векторов для прогнозирования доходности только на новостях")
+  ) 
+gtsave(table_svm_bmw_news_only, filename = 'svm_pred_news_only_bmw.html')
+
+
+#Только финансовые данные 
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_sent_f_l <- train(yield ~ yield_1, data = train_ml,  method = "svmLinear", trControl = Control)
+predict_svm_l <- predict(object=mod_sent_f_l, newdata=test_ml)
+fin_l <- cor.test(test_ml$yield, predict_svm_l, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_f_p <- train(yield ~ yield_1, data = train_ml,   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p <- predict(object=mod_sent_f_p, newdata=test_ml)
+fin_p <- cor.test(test_ml$yield, predict_svm_p, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_f_r <- train(yield ~ yield_1, data = train_ml,  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r <- predict(object=mod_sent_f_r, newdata=test_ml)
+fin_r <- cor.test(test_ml$yield, predict_svm_r, conf.level = 0.90)
+
+#учесенная спецификация - лаг1 - лаг5
+set.seed(1234)
+mod_sent_b1_5_l <- train(y = train_ml$yield, x = train_ml[,c(5:9, 12)],  method = "svmLinear", trControl = Control)
+predict_svm_l <- predict(object=mod_sent_b1_5_l, newdata=test_ml[, c(5:9, 12)])
+all_1_5_l <- cor.test(test_ml$yield, predict_svm_l, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_5_p <- train(y = train_ml$yield, x = train_ml[,c(5:9, 12)],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p <- predict(object=mod_sent_b1_5_p, newdata=test_ml[, c(5:9, 12)])
+all_1_5_p <- cor.test(test_ml$yield, predict_svm_p, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_5_r <- train(y = train_ml$yield, x = train_ml[,c(5:9, 12)],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r <- predict(object=mod_sent_b1_5_r, newdata=test_ml[, c(5:9, 12)])
+all_1_5_r <- cor.test(test_ml$yield, predict_svm_r, conf.level = 0.90)
+
+#Значимая спецификация текущий и лаг4
+set.seed(1234)
+mod_sent_b1_4_l <- train(y = train_ml$yield, x = train_ml[,c(5, 10,  11, 12)],  method = "svmLinear", trControl = Control)
+predict_svm_l <- predict(object=mod_sent_b1_4_l, newdata=test_ml[, c(5, 10, 11,  12)])
+all_arima_l <- cor.test(test_ml$yield, predict_svm_l, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_4_p <- train(y = train_ml$yield, x = train_ml[,c(5, 10,  11, 12)],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p <- predict(object=mod_sent_b1_4_p, newdata=test_ml[, c(5, 10, 11, 12)])
+all_arima_p <- cor.test(test_ml$yield, predict_svm_p, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_4_r <- train(y = train_ml$yield, x = train_ml[,c(5, 10,  11, 12)],  method = "svmRadial", tuneLength = 5,  trControl = Control)
+predict_svm_r <- predict(object=mod_sent_b1_4_r, newdata=test_ml[, c(5, 10,  11, 12)])
+all_arima_r <- cor.test(test_ml$yield, predict_svm_r, conf.level = 0.90)
+
+#Составляем таблицу и выгружаем ее 
+int_a_svm_b <- c(fin_l$conf.int[1], fin_p$conf.int[1], fin_r$conf.int[1],
+                 all_1_5_l$conf.int[1], all_1_5_p$conf.int[1], all_1_5_r$conf.int[1],
+                 all_arima_l$conf.int[1], all_arima_p$conf.int[1], all_arima_r$conf.int[1])
+
+int_b_svm_b <- c(fin_l$conf.int[2], fin_p$conf.int[2], fin_r$conf.int[2],
+                 all_1_5_l$conf.int[2], all_1_5_p$conf.int[2], all_1_5_r$conf.int[2],
+                 all_arima_l$conf.int[2], all_arima_p$conf.int[2], all_arima_r$conf.int[2])
+
+cor_svm_b <- c(fin_l$estimate, fin_p$estimate, fin_r$estimate,
+               all_1_5_l$estimate, all_1_5_p$estimate, all_1_5_r$estimate,
+               all_arima_l$estimate, all_arima_p$estimate, all_arima_r$estimate)
+
+pv_svm_b <- c(fin_l$p.value, fin_p$p.value, fin_r$p.value,
+              all_1_5_l$p.value, all_1_5_p$p.value, all_1_5_r$p.value,
+              all_arima_l$p.value, all_arima_p$p.value, all_arima_r$p.value)
+
+table_cortest_both_svm <- data.frame(kernel_svm, int_a_svm_b, int_b_svm_b, cor_svm_b, pv_svm_b)
+
+rownames(table_cortest_both_svm)[1] <- 'Финансы'
+rownames(table_cortest_both_svm)[4] <- 'Усеченная'
+rownames(table_cortest_both_svm)[7] <- 'Значимая'
+
+table_cortest_both_svm$int_a_svm_b <- round(table_cortest_both_svm$int_a_svm_b, 4)
+table_cortest_both_svm$int_b_svm_b <- round(table_cortest_both_svm$int_b_svm_b, 4)
+table_cortest_both_svm$cor_svm_b <- round(table_cortest_both_svm$cor_svm_b, 4)
+table_cortest_both_svm$pv_svm_b <- round(table_cortest_both_svm$pv_svm_b, 4)
+
+table_cortest_both_svm
+
+#Выгрузим
+table_svm_bmw_both <- table_cortest_both_svm %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование метода опорных векторов для прогнозирования доходности на разных источниках данных")
+  ) 
+gtsave(table_svm_bmw_both, filename = 'svm_pred_both_bmw.html')
+
+
+
+#ML - аномалии 
+k <- median(abs(bmw_sent_ok_lag$yield))
+bmw_sent_ok_lag_big <- filter(bmw_sent_ok_lag, yield > k |yield < -k)
+train_ml_b <- bmw_sent_ok_lag_big[1:round(length(bmw_sent_ok_lag_big$yield)*0.7),]
+test_ml_b <- bmw_sent_ok_lag_big[(round(length(bmw_sent_ok_lag_big$yield)*0.7)+1):length(bmw_sent_ok_lag_big$yield),]
+
+#Тексты - усеченная и значимая спецификация 
+#только новости - модель из Арима спецификации
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_sent_1_4_lin_b <- train(yield ~ sent_1 + sent_6, data = train_ml_b,  method = "svmLinear", trControl = Control)
+predict_svm_l_b <- predict(object=mod_sent_1_4_lin_b, newdata=test_ml_b)
+news_arima_l_b <- cor.test(test_ml_b$yield, predict_svm_l_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_4_pol_b <- train(yield ~ sent_1 + sent_6, data = train_ml_b,   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_b <- predict(object=mod_sent_1_4_pol_b, newdata=test_ml_b)
+news_arima_p_b <- cor.test(test_ml_b$yield, predict_svm_p_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_4_rad_b <- train(yield ~ sent_1 + sent_6, data = train_ml_b,  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_b <- predict(object=mod_sent_1_4_rad_b, newdata=test_ml_b)
+news_arima_r_b <- cor.test(test_ml_b$yield, predict_svm_r_b, conf.level = 0.90)
+
+#только новости - модель лаг1 - лаг5
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_sent_1_5_lin_b <- train(y = train_ml_b$yield, x = train_ml_b[,5:9],  method = "svmLinear", trControl = Control)
+predict_svm_l_b <- predict(object=mod_sent_1_5_lin_b, newdata=test_ml_b[,5:9])
+news_1_5_l_b <- cor.test(test_ml_b$yield, predict_svm_l_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_5_pol_b <- train(y = train_ml_b$yield, x = train_ml_b[,5:9],   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_b <- predict(object = mod_sent_1_5_pol_b, newdata=test_ml_b[,5:9])
+news_1_5_p_b <- cor.test(test_ml_b$yield, predict_svm_p_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_1_5_rad_b <- train(y = train_ml_b$yield, x = train_ml_b[,5:9],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_b <- predict(object=mod_sent_1_5_rad_b, newdata=test_ml_b[,5:9])
+news_1_5_r_b <- cor.test(test_ml_b$yield, predict_svm_r_b, conf.level = 0.90)
+
+#В таблицу это все 
+#Составляем таблицу и выгружаем ее 
+int_a_svm_big_n <- c(news_1_5_l_b$conf.int[1], news_1_5_p_b$conf.int[1], news_1_5_r_b$conf.int[1],
+                 news_arima_l_b$conf.int[1], news_arima_p_b$conf.int[1], news_arima_r_b$conf.int[1])
+
+int_b_svm_big_n <- c(news_1_5_l_b$conf.int[2], news_1_5_p_b$conf.int[2], news_1_5_r_b$conf.int[2],
+                 news_arima_l_b$conf.int[2], news_arima_p_b$conf.int[2], news_arima_r_b$conf.int[2])
+
+cor_svm_big_n <- c(news_1_5_l_b$estimate, news_1_5_p_b$estimate, news_1_5_r_b$estimate,
+               news_arima_l_b$estimate, news_arima_p_b$estimate, news_arima_r_b$estimate)
+
+pv_svm_big_n <- c(news_1_5_l_b$p.value, news_1_5_p_b$p.value, news_1_5_r_b$p.value,
+              news_arima_l_b$p.value, news_arima_p_b$p.value, news_arima_r_b$p.value)
+
+kernel_svm_big_n <- c('Linear', 'Poly', 'Radial', 
+                      'Linear', 'Poly', 'Radial')
+
+table_cortest_news_svm_big <- data.frame(kernel_svm_big_n, int_a_svm_big_n, int_b_svm_big_n, cor_svm_big_n, pv_svm_big_n)
+
+rownames(table_cortest_news_svm_big)[1] <- 'Усеченная'
+rownames(table_cortest_news_svm_big)[4] <- 'Значимая'
+
+table_cortest_news_svm_big$int_a_svm_big_n <- round(table_cortest_news_svm_big$int_a_svm_big_n, 4)
+table_cortest_news_svm_big$int_b_svm_big_n <- round(table_cortest_news_svm_big$int_b_svm_big_n, 4)
+table_cortest_news_svm_big$cor_svm_big_n <- round(table_cortest_news_svm_big$cor_svm_big_n, 4)
+table_cortest_news_svm_big$pv_svm_big_n <- round(table_cortest_news_svm_big$pv_svm_big_n, 4)
+
+table_cortest_news_svm_big
+
+#Выгрузим
+table_svm_bmw_news_big <- table_cortest_news_svm_big %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование метода опорных векторов для прогнозирования большой доходности на новостях")
+  ) 
+gtsave(table_svm_bmw_news_big, filename = 'svm_pred_news_bmw_big.html')
+
+
+#Только финансовые данные 
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_sent_f_l_b <- train(yield ~ yield_1, data = train_ml_b,  method = "svmLinear", trControl = Control)
+predict_svm_l_b <- predict(object=mod_sent_f_l_b, newdata=test_ml_b)
+fin_l_b <- cor.test(test_ml_b$yield, predict_svm_l_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_f_p_b <- train(yield ~ yield_1, data = train_ml_b,   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_b <- predict(object=mod_sent_f_p_b, newdata=test_ml_b)
+fin_p_b <- cor.test(test_ml_b$yield, predict_svm_p_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_f_r_b <- train(yield ~ yield_1, data = train_ml_b,  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_b <- predict(object=mod_sent_f_r_b, newdata=test_ml_b)
+fin_r_b <- cor.test(test_ml_b$yield, predict_svm_r_b, conf.level = 0.90)
+
+#учесенная спецификация - лаг1 - лаг5
+set.seed(1234)
+mod_sent_b1_5_l_b <- train(y = train_ml_b$yield, x = train_ml_b[,c(5:9, 12)],  method = "svmLinear", trControl = Control)
+predict_svm_l_b <- predict(object=mod_sent_b1_5_l_b, newdata=test_ml_b[, c(5:9, 12)])
+all_1_5_l_b <- cor.test(test_ml_b$yield, predict_svm_l_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_5_p_b <- train(y = train_ml_b$yield, x = train_ml_b[,c(5:9, 12)],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_b <- predict(object=mod_sent_b1_5_p_b, newdata=test_ml_b[, c(5:9, 12)])
+all_1_5_p_b <- cor.test(test_ml_b$yield, predict_svm_p_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_5_r_b <- train(y = train_ml_b$yield, x = train_ml_b[,c(5:9, 12)],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_b <- predict(object=mod_sent_b1_5_r_b, newdata=test_ml_b[, c(5:9, 12)])
+all_1_5_r_b <- cor.test(test_ml_b$yield, predict_svm_r_b, conf.level = 0.90)
+
+#Значимая спецификация текущий и лаг4
+set.seed(1234)
+mod_sent_b1_4_l_b <- train(y = train_ml_b$yield, x = train_ml_b[,c(5, 10,  11,  12)],  method = "svmLinear", trControl = Control)
+predict_svm_l_b <- predict(object=mod_sent_b1_4_l_b, newdata=test_ml_b[, c(5, 10, 11, 12)])
+all_arima_l_b <- cor.test(test_ml_b$yield, predict_svm_l_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_4_p_b <- train(y = train_ml_b$yield, x = train_ml_b[,c(5, 10, 11, 12)],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_b <- predict(object=mod_sent_b1_4_p_b, newdata=test_ml_b[, c(5, 10, 11, 12)])
+all_arima_p_b <- cor.test(test_ml_b$yield, predict_svm_p_b, conf.level = 0.90)
+
+set.seed(1234)
+mod_sent_b1_4_r_b <- train(y = train_ml_b$yield, x = train_ml_b[,c(5, 10, 11, 12)],  method = "svmRadial", tuneLength = 5,  trControl = Control)
+predict_svm_r_b <- predict(object=mod_sent_b1_4_r_b, newdata=test_ml_b[, c(5, 10, 11, 12)])
+all_arima_r_b <- cor.test(test_ml_b$yield, predict_svm_r_b, conf.level = 0.90)
+
+#Составляем таблицу и выгружаем ее 
+int_a_svm_b_b <- c(fin_l_b$conf.int[1], fin_p_b$conf.int[1], fin_r_b$conf.int[1],
+                 all_1_5_l_b$conf.int[1], all_1_5_p_b$conf.int[1], all_1_5_r_b$conf.int[1],
+                 all_arima_l_b$conf.int[1], all_arima_p_b$conf.int[1], all_arima_r_b$conf.int[1])
+
+int_b_svm_b_b <- c(fin_l_b$conf.int[2], fin_p_b$conf.int[2], fin_r_b$conf.int[2],
+                 all_1_5_l_b$conf.int[2], all_1_5_p_b$conf.int[2], all_1_5_r_b$conf.int[2],
+                 all_arima_l_b$conf.int[2], all_arima_p_b$conf.int[2], all_arima_r_b$conf.int[2])
+
+cor_svm_b_b <- c(fin_l_b$estimate, fin_p_b$estimate, fin_r_b$estimate,
+               all_1_5_l_b$estimate, all_1_5_p_b$estimate, all_1_5_r_b$estimate,
+               all_arima_l_b$estimate, all_arima_p_b$estimate, all_arima_r_b$estimate)
+
+pv_svm_b_b <- c(fin_l_b$p.value, fin_p_b$p.value, fin_r_b$p.value,
+              all_1_5_l_b$p.value, all_1_5_p_b$p.value, all_1_5_r_b$p.value,
+              all_arima_l_b$p.value, all_arima_p_b$p.value, all_arima_r_b$p.value)
+
+table_cortest_both_svm_big <- data.frame(kernel_svm, int_a_svm_b_b, int_b_svm_b_b, cor_svm_b_b, pv_svm_b_b)
+
+rownames(table_cortest_both_svm_big)[1] <- 'Финансы'
+rownames(table_cortest_both_svm_big)[4] <- 'Усеченная'
+rownames(table_cortest_both_svm_big)[7] <- 'Значимая'
+
+table_cortest_both_svm_big$int_a_svm_b_b <- round(table_cortest_both_svm_big$int_a_svm_b_b, 4)
+table_cortest_both_svm_big$int_b_svm_b_b <- round(table_cortest_both_svm_big$int_b_svm_b_b, 4)
+table_cortest_both_svm_big$cor_svm_b_b <- round(table_cortest_both_svm_big$cor_svm_b_b, 4)
+table_cortest_both_svm_big$pv_svm_b_b <- round(table_cortest_both_svm_big$pv_svm_b_b, 4)
+
+table_cortest_both_svm_big
+
+#Выгрузим
+table_svm_bmw_both_big <- table_cortest_both_svm_big %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование метода опорных векторов для прогнозирования большой доходности на разных источниках данных")
+  ) 
+gtsave(table_svm_bmw_both_big, filename = 'svm_pred_both_bmw_big.html')
+
+#Теперь бинарная зависимая переменная и логиты-не логиты 
+bmw_sent_ok$fin_1 <- lag(bmw_sent_ok$yield, 1)
+bmw_sent_ok$fin_2 <- lag(bmw_sent_ok$yield, 2)
+bmw_sent_ok$bin <- as.factor(bmw_sent_ok$bin)
+bmw_sent_ok <- na.omit(bmw_sent_ok)
+
+#Модели только на финансах - 2 лага 
+set.seed(1234) #логит
+mod_ml_sent_glm_fin <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,12:13],  method = "glmnet", trControl = Control)
+best_sent_glm_fin <- print.train(mod_ml_sent_glm_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_glm_f <- mod_ml_sent_glm_fin$resample$Accuracy
+mod_ml_sent_glm_fin_acc <- mod_ml_sent_glm_fin$results[best_sent_glm_fin[,5] == "*", 3]
+mod_ml_sent_glm_fin_sd <- mod_ml_sent_glm_fin$results[best_sent_glm_fin[,5] == "*", 5]
+mod_ml_sent_glm_fin_int_a <- mod_ml_sent_glm_fin_acc - (1.645 * mod_ml_sent_glm_fin_sd)
+mod_ml_sent_glm_fin_int_b <- mod_ml_sent_glm_fin_acc + (1.645 * mod_ml_sent_glm_fin_sd)
+mod_ml_sent_glm_fin_better <- ifelse(mod_ml_sent_glm_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_sent_rf_fin <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,12:13],  method = "rf", trControl = Control)
+best_sent_rf_fin <-print.train(mod_ml_sent_rf_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_rf_f <- mod_ml_sent_rf_fin$resample$Accuracy
+mod_ml_sent_rf_fin_acc <- mod_ml_sent_rf_fin$results$Accuracy
+mod_ml_sent_rf_fin_sd <- mod_ml_sent_rf_fin$results$AccuracySD
+mod_ml_sent_rf_fin_int_a <- mod_ml_sent_rf_fin_acc - (1.645 * mod_ml_sent_rf_fin_sd)
+mod_ml_sent_rf_fin_int_b <- mod_ml_sent_rf_fin_acc + (1.645 * mod_ml_sent_rf_fin_sd)
+mod_ml_sent_rf_fin_better <- ifelse(mod_ml_sent_rf_fin_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_sent_bayes_fin <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,12:13],  method = "naive_bayes", trControl = Control)
+best_sent_bayes_fin <- print.train(mod_ml_sent_bayes_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_bayes_f <- mod_ml_sent_bayes_fin$resample$Accuracy
+mod_ml_sent_bayes_fin_acc <- mod_ml_sent_bayes_fin$results[best_sent_bayes_fin[,4] == "*", 4]
+mod_ml_sent_bayes_fin_sd <- mod_ml_sent_bayes_fin$results[best_sent_bayes_fin[,4] == "*", 6]
+mod_ml_sent_bayes_fin_int_a <- mod_ml_sent_bayes_fin_acc - (1.645 * mod_ml_sent_bayes_fin_sd)
+mod_ml_sent_bayes_fin_int_b <- mod_ml_sent_bayes_fin_acc + (1.645 * mod_ml_sent_bayes_fin_sd)
+mod_ml_sent_bayes_fin_better <- ifelse(mod_ml_sent_bayes_fin_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_sent_boost_fin <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,12:13],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_sent_boost_fin <- print.train(mod_ml_sent_boost_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_boost_f <- mod_ml_sent_boost_fin$resample$Accuracy
+mod_ml_sent_boost_fin_acc <- mod_ml_sent_boost_fin$results[best_sent_boost_fin[,5] == "*", 5]
+mod_ml_sent_boost_fin_sd <- mod_ml_sent_boost_fin$results[best_sent_boost_fin[,5] == "*", 7]
+mod_ml_sent_boost_fin_int_a <- mod_ml_sent_boost_fin_acc - (1.645 * mod_ml_sent_boost_fin_sd)
+mod_ml_sent_boost_fin_int_b <- mod_ml_sent_boost_fin_acc + (1.645 * mod_ml_sent_boost_fin_sd)
+mod_ml_sent_boost_fin_better <- ifelse(mod_ml_sent_boost_fin_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_sent_svml_fin <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,12:13],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_sent_svml_fin <- print.train(mod_ml_sent_svml_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svml_f <- mod_ml_sent_svml_fin$resample$Accuracy
+mod_ml_sent_svml_fin_acc <- mod_ml_sent_svml_fin$results$Accuracy
+mod_ml_sent_svml_fin_sd <- mod_ml_sent_svml_fin$results$AccuracySD
+mod_ml_sent_svml_fin_int_a <- mod_ml_sent_svml_fin_acc - (1.645 * mod_ml_sent_svml_fin_sd)
+mod_ml_sent_svml_fin_int_b <- mod_ml_sent_svml_fin_acc + (1.645 * mod_ml_sent_svml_fin_sd)
+mod_ml_sent_svml_fin_better <- ifelse(mod_ml_sent_svml_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmp_fin <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,12:13],  method = "svmPoly", 
+                             tuneLength = 3, trControl = Control, verbose = FALSE)
+best_sent_svmp_fin <- print.train(mod_ml_sent_svmp_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmp_f <- mod_ml_sent_svmp_fin$resample$Accuracy
+mod_ml_sent_svmp_fin_acc <- mod_ml_sent_svmp_fin$results[best_sent_svmp_fin[,6] == "*", 4]
+mod_ml_sent_svmp_fin_sd <- mod_ml_sent_svmp_fin$results[best_sent_svmp_fin[,6] == "*", 6]
+mod_ml_sent_svmp_fin_int_a <- mod_ml_sent_svmp_fin_acc - (1.645 * mod_ml_sent_svmp_fin_sd)
+mod_ml_sent_svmp_fin_int_b <- mod_ml_sent_svmp_fin_acc + (1.645 * mod_ml_sent_svmp_fin_sd)
+mod_ml_sent_svmp_fin_better <- ifelse(mod_ml_sent_svmp_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmr_fin <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,12:13],  method = "svmRadial", 
+                            tuneLength = 5, trControl = Control, verbose = FALSE)
+best_sent_svmr_fin <- print.train(mod_ml_sent_svmr_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmr_f <- mod_ml_sent_svmr_fin$resample$Accuracy
+mod_ml_sent_svmr_fin_acc <- mod_ml_sent_svmr_fin$results[best_sent_svmr_fin[,4] == "*", 3]
+mod_ml_sent_svmr_fin_sd <- mod_ml_sent_svmr_fin$results[best_sent_svmr_fin[,4] == "*", 5]
+mod_ml_sent_svmr_fin_int_a <- mod_ml_sent_svmr_fin_acc - (1.645 * mod_ml_sent_svmr_fin_sd)
+mod_ml_sent_svmr_fin_int_b <- mod_ml_sent_svmr_fin_acc + (1.645 * mod_ml_sent_svmr_fin_sd)
+mod_ml_sent_svmr_fin_better <- ifelse(mod_ml_sent_svmr_fin_int_a > 0.5, '+', '-')
+
+Comp_fin <- resamples(list(bayes = mod_ml_sent_bayes_fin,
+                           logit = mod_ml_sent_glm_fin,
+                         rf = mod_ml_sent_rf_fin,
+                         boost = mod_ml_sent_boost_fin,
+                         svm_lin = mod_ml_sent_svml_fin, 
+                         svm_poly = mod_ml_sent_svmp_fin, 
+                         svm_rad = mod_ml_sent_svmr_fin))
+
+bwplot(Comp_fin, metric="Accuracy")  
+
+#Модели только на новостях текущий и лаг один
+set.seed(1234) #логит
+mod_ml_sent_glm_n0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,4:5],  method = "glmnet", trControl = Control)
+best_sent_glm_n0_1 <- print.train(mod_ml_sent_glm_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_glm_n_0_1 <- mod_ml_sent_glm_n0_1$resample$Accuracy
+mod_ml_sent_glm_n0_1_acc <- mod_ml_sent_glm_n0_1$results[best_sent_glm_n0_1[,5] == "*", 3]
+mod_ml_sent_glm_n0_1_sd <- mod_ml_sent_glm_n0_1$results[best_sent_glm_n0_1[,5] == "*", 5]
+mod_ml_sent_glm_n0_1_int_a <- mod_ml_sent_glm_n0_1_acc - (1.645 * mod_ml_sent_glm_n0_1_sd)
+mod_ml_sent_glm_n0_1_int_b <- mod_ml_sent_glm_n0_1_acc + (1.645 * mod_ml_sent_glm_n0_1_sd)
+mod_ml_sent_glm_n0_1_better <- ifelse(mod_ml_sent_glm_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_sent_rf_n0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,4:5],  method = "rf", trControl = Control)
+best_sent_rf_n0_1 <-print.train(mod_ml_sent_rf_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_rf_n_0_1 <- mod_ml_sent_rf_n0_1$resample$Accuracy
+mod_ml_sent_rf_n0_1_acc <- mod_ml_sent_rf_n0_1$results$Accuracy
+mod_ml_sent_rf_n0_1_sd <- mod_ml_sent_rf_n0_1$results$AccuracySD
+mod_ml_sent_rf_n0_1_int_a <- mod_ml_sent_rf_n0_1_acc - (1.645 * mod_ml_sent_rf_n0_1_sd)
+mod_ml_sent_rf_n0_1_int_b <- mod_ml_sent_rf_n0_1_acc + (1.645 * mod_ml_sent_rf_n0_1_sd)
+mod_ml_sent_rf_n0_1_better <- ifelse(mod_ml_sent_rf_n0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_sent_bayes_n0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,4:5],  method = "naive_bayes", trControl = Control)
+best_sent_bayes_n0_1 <- print.train(mod_ml_sent_bayes_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_bayes_n_0_1 <- mod_ml_sent_bayes_n0_1$resample$Accuracy
+mod_ml_sent_bayes_n0_1_acc <- mod_ml_sent_bayes_n0_1$results[best_sent_bayes_n0_1[,4] == "*", 4]
+mod_ml_sent_bayes_n0_1_sd <- mod_ml_sent_bayes_n0_1$results[best_sent_bayes_n0_1[,4] == "*", 6]
+mod_ml_sent_bayes_n0_1_int_a <- mod_ml_sent_bayes_n0_1_acc - (1.645 * mod_ml_sent_bayes_n0_1_sd)
+mod_ml_sent_bayes_n0_1_int_b <- mod_ml_sent_bayes_n0_1_acc + (1.645 * mod_ml_sent_bayes_n0_1_sd)
+mod_ml_sent_bayes_n0_1_better <- ifelse(mod_ml_sent_bayes_n0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_sent_boost_n0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,4:5],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_sent_boost_n0_1 <- print.train(mod_ml_sent_boost_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_boost_n_0_1 <- mod_ml_sent_boost_n0_1$resample$Accuracy
+mod_ml_sent_boost_n0_1_acc <- mod_ml_sent_boost_n0_1$results[best_sent_boost_n0_1[,5] == "*", 5]
+mod_ml_sent_boost_n0_1_sd <- mod_ml_sent_boost_n0_1$results[best_sent_boost_n0_1[,5] == "*", 7]
+mod_ml_sent_boost_n0_1_int_a <- mod_ml_sent_boost_n0_1_acc - (1.645 * mod_ml_sent_boost_n0_1_sd)
+mod_ml_sent_boost_n0_1_int_b <- mod_ml_sent_boost_n0_1_acc + (1.645 * mod_ml_sent_boost_n0_1_sd)
+mod_ml_sent_boost_n0_1_better <- ifelse(mod_ml_sent_boost_n0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_sent_svml_n0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,4:5],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_sent_svml_n0_1 <- print.train(mod_ml_sent_svml_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svml_n_0_1 <- mod_ml_sent_svml_n0_1$resample$Accuracy
+mod_ml_sent_svml_n0_1_acc <- mod_ml_sent_svml_n0_1$results$Accuracy
+mod_ml_sent_svml_n0_1_sd <- mod_ml_sent_svml_n0_1$results$AccuracySD
+mod_ml_sent_svml_n0_1_int_a <- mod_ml_sent_svml_n0_1_acc - (1.645 * mod_ml_sent_svml_n0_1_sd)
+mod_ml_sent_svml_n0_1_int_b <- mod_ml_sent_svml_n0_1_acc + (1.645 * mod_ml_sent_svml_n0_1_sd)
+mod_ml_sent_svml_n0_1_better <- ifelse(mod_ml_sent_svml_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmp_n0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,4:5],  method = "svmPoly", 
+                              tuneLength = 3, trControl = Control, verbose = FALSE)
+best_sent_svmp_n0_1 <- print.train(mod_ml_sent_svmp_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmp_n_0_1 <- mod_ml_sent_svmp_n0_1$resample$Accuracy
+mod_ml_sent_svmp_n0_1_acc <- mod_ml_sent_svmp_n0_1$results[best_sent_svmp_n0_1[,6] == "*", 4]
+mod_ml_sent_svmp_n0_1_sd <- mod_ml_sent_svmp_n0_1$results[best_sent_svmp_n0_1[,6] == "*", 6]
+mod_ml_sent_svmp_n0_1_int_a <- mod_ml_sent_svmp_n0_1_acc - (1.645 * mod_ml_sent_svmp_n0_1_sd)
+mod_ml_sent_svmp_n0_1_int_b <- mod_ml_sent_svmp_n0_1_acc + (1.645 * mod_ml_sent_svmp_n0_1_sd)
+mod_ml_sent_svmp_n0_1_better <- ifelse(mod_ml_sent_svmp_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmr_n0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,4:5],  method = "svmRadial", 
+                              tuneLength = 5, trControl = Control, verbose = FALSE)
+best_sent_svmr_n0_1 <- print.train(mod_ml_sent_svmr_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmr_n_0_1 <- mod_ml_sent_svmr_n0_1$resample$Accuracy
+mod_ml_sent_svmr_n0_1_acc <- mod_ml_sent_svmr_n0_1$results[best_sent_svmr_n0_1[,4] == "*", 3]
+mod_ml_sent_svmr_n0_1_sd <- mod_ml_sent_svmr_n0_1$results[best_sent_svmr_n0_1[,4] == "*", 5]
+mod_ml_sent_svmr_n0_1_int_a <- mod_ml_sent_svmr_n0_1_acc - (1.645 * mod_ml_sent_svmr_n0_1_sd)
+mod_ml_sent_svmr_n0_1_int_b <- mod_ml_sent_svmr_n0_1_acc + (1.645 * mod_ml_sent_svmr_n0_1_sd)
+mod_ml_sent_svmr_n0_1_better <- ifelse(mod_ml_sent_svmr_n0_1_int_a > 0.5, '+', '-')
+
+Comp_n0_1 <- resamples(list(bayes = mod_ml_sent_bayes_n0_1,
+                           logit = mod_ml_sent_glm_n0_1,
+                           rf = mod_ml_sent_rf_n0_1,
+                           boost = mod_ml_sent_boost_n0_1,
+                           svm_lin = mod_ml_sent_svml_n0_1, 
+                           svm_poly = mod_ml_sent_svmp_n0_1, 
+                           svm_rad = mod_ml_sent_svmr_n0_1))
+
+bwplot(Comp_n0_1, metric="Accuracy")  
+
+#Теперь новости лаг1 - лаг5
+set.seed(1234) #логит
+mod_ml_sent_glm_n1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,5:9],  method = "glmnet", trControl = Control)
+best_sent_glm_n1_5 <- print.train(mod_ml_sent_glm_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_glm_n_1_5 <- mod_ml_sent_glm_n1_5$resample$Accuracy
+mod_ml_sent_glm_n1_5_acc <- mod_ml_sent_glm_n1_5$results[best_sent_glm_n1_5[,5] == "*", 3]
+mod_ml_sent_glm_n1_5_sd <- mod_ml_sent_glm_n1_5$results[best_sent_glm_n1_5[,5] == "*", 5]
+mod_ml_sent_glm_n1_5_int_a <- mod_ml_sent_glm_n1_5_acc - (1.645 * mod_ml_sent_glm_n1_5_sd)
+mod_ml_sent_glm_n1_5_int_b <- mod_ml_sent_glm_n1_5_acc + (1.645 * mod_ml_sent_glm_n1_5_sd)
+mod_ml_sent_glm_n1_5_better <- ifelse(mod_ml_sent_glm_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_sent_rf_n1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,5:9],  method = "rf", trControl = Control)
+best_sent_rf_n1_5 <-print.train(mod_ml_sent_rf_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_rf_n_1_5 <- mod_ml_sent_rf_n1_5$resample$Accuracy
+mod_ml_sent_rf_n1_5_acc <- mod_ml_sent_rf_n1_5$results[best_sent_rf_n1_5[,4] == "*", 2]
+mod_ml_sent_rf_n1_5_sd <- mod_ml_sent_rf_n1_5$results[best_sent_rf_n1_5[,4] == "*", 4]
+mod_ml_sent_rf_n1_5_int_a <- mod_ml_sent_rf_n1_5_acc - (1.645 * mod_ml_sent_rf_n1_5_sd)
+mod_ml_sent_rf_n1_5_int_b <- mod_ml_sent_rf_n1_5_acc + (1.645 * mod_ml_sent_rf_n1_5_sd)
+mod_ml_sent_rf_n1_5_better <- ifelse(mod_ml_sent_rf_n1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_sent_bayes_n1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,5:9],  method = "naive_bayes", trControl = Control)
+best_sent_bayes_n1_5 <- print.train(mod_ml_sent_bayes_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_bayes_n_1_5 <- mod_ml_sent_bayes_n1_5$resample$Accuracy
+mod_ml_sent_bayes_n1_5_acc <- mod_ml_sent_bayes_n1_5$results[best_sent_bayes_n1_5[,4] == "*", 4]
+mod_ml_sent_bayes_n1_5_sd <- mod_ml_sent_bayes_n1_5$results[best_sent_bayes_n1_5[,4] == "*", 6]
+mod_ml_sent_bayes_n1_5_int_a <- mod_ml_sent_bayes_n1_5_acc - (1.645 * mod_ml_sent_bayes_n1_5_sd)
+mod_ml_sent_bayes_n1_5_int_b <- mod_ml_sent_bayes_n1_5_acc + (1.645 * mod_ml_sent_bayes_n1_5_sd)
+mod_ml_sent_bayes_n1_5_better <- ifelse(mod_ml_sent_bayes_n1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_sent_boost_n1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,5:9],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_sent_boost_n1_5 <- print.train(mod_ml_sent_boost_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_boost_n_1_5 <- mod_ml_sent_boost_n1_5$resample$Accuracy
+mod_ml_sent_boost_n1_5_acc <- mod_ml_sent_boost_n1_5$results[best_sent_boost_n1_5[,5] == "*", 5]
+mod_ml_sent_boost_n1_5_sd <- mod_ml_sent_boost_n1_5$results[best_sent_boost_n1_5[,5] == "*", 7]
+mod_ml_sent_boost_n1_5_int_a <- mod_ml_sent_boost_n1_5_acc - (1.645 * mod_ml_sent_boost_n1_5_sd)
+mod_ml_sent_boost_n1_5_int_b <- mod_ml_sent_boost_n1_5_acc + (1.645 * mod_ml_sent_boost_n1_5_sd)
+mod_ml_sent_boost_n1_5_better <- ifelse(mod_ml_sent_boost_n1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_sent_svml_n1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,5:9],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_sent_svml_n1_5 <- print.train(mod_ml_sent_svml_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svml_n_1_5 <- mod_ml_sent_svml_n1_5$resample$Accuracy
+mod_ml_sent_svml_n1_5_acc <- mod_ml_sent_svml_n1_5$results$Accuracy
+mod_ml_sent_svml_n1_5_sd <- mod_ml_sent_svml_n1_5$results$AccuracySD
+mod_ml_sent_svml_n1_5_int_a <- mod_ml_sent_svml_n1_5_acc - (1.645 * mod_ml_sent_svml_n1_5_sd)
+mod_ml_sent_svml_n1_5_int_b <- mod_ml_sent_svml_n1_5_acc + (1.645 * mod_ml_sent_svml_n1_5_sd)
+mod_ml_sent_svml_n1_5_better <- ifelse(mod_ml_sent_svml_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmp_n1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,5:9],  method = "svmPoly", 
+                               tuneLength = 3, trControl = Control, verbose = FALSE)
+best_sent_svmp_n1_5 <- print.train(mod_ml_sent_svmp_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmp_n_1_5 <- mod_ml_sent_svmp_n1_5$resample$Accuracy
+mod_ml_sent_svmp_n1_5_acc <- mod_ml_sent_svmp_n1_5$results[best_sent_svmp_n1_5[,6] == "*", 4]
+mod_ml_sent_svmp_n1_5_sd <- mod_ml_sent_svmp_n1_5$results[best_sent_svmp_n1_5[,6] == "*", 6]
+mod_ml_sent_svmp_n1_5_int_a <- mod_ml_sent_svmp_n1_5_acc - (1.645 * mod_ml_sent_svmp_n1_5_sd)
+mod_ml_sent_svmp_n1_5_int_b <- mod_ml_sent_svmp_n1_5_acc + (1.645 * mod_ml_sent_svmp_n1_5_sd)
+mod_ml_sent_svmp_n1_5_better <- ifelse(mod_ml_sent_svmp_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmr_n1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,5:9],  method = "svmRadial", 
+                               tuneLength = 5, trControl = Control, verbose = FALSE)
+best_sent_svmr_n1_5 <- print.train(mod_ml_sent_svmr_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmr_n_1_5 <- mod_ml_sent_svmr_n1_5$resample$Accuracy
+mod_ml_sent_svmr_n1_5_acc <- mod_ml_sent_svmr_n1_5$results[best_sent_svmr_n1_5[,4] == "*", 3]
+mod_ml_sent_svmr_n1_5_sd <- mod_ml_sent_svmr_n1_5$results[best_sent_svmr_n1_5[,4] == "*", 5]
+mod_ml_sent_svmr_n1_5_int_a <- mod_ml_sent_svmr_n1_5_acc - (1.645 * mod_ml_sent_svmr_n1_5_sd)
+mod_ml_sent_svmr_n1_5_int_b <- mod_ml_sent_svmr_n1_5_acc + (1.645 * mod_ml_sent_svmr_n1_5_sd)
+mod_ml_sent_svmr_n1_5_better <- ifelse(mod_ml_sent_svmr_n1_5_int_a > 0.5, '+', '-')
+
+Comp_n1_5 <- resamples(list(bayes = mod_ml_sent_bayes_n1_5,
+                            logit = mod_ml_sent_glm_n1_5,
+                            rf = mod_ml_sent_rf_n1_5,
+                            boost = mod_ml_sent_boost_n1_5,
+                            svm_lin = mod_ml_sent_svml_n1_5, 
+                            svm_poly = mod_ml_sent_svmp_n1_5, 
+                            svm_rad = mod_ml_sent_svmr_n1_5))
+
+bwplot(Comp_n1_5, metric="Accuracy")  
+
+#Новости и финансы, лаг 0-1
+set.seed(1234) #логит
+mod_ml_sent_glm_all0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "glmnet", trControl = Control)
+best_sent_glm_all0_1 <- print.train(mod_ml_sent_glm_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_glm_all_0_1 <- mod_ml_sent_glm_all0_1$resample$Accuracy
+mod_ml_sent_glm_all0_1_acc <- mod_ml_sent_glm_all0_1$results[best_sent_glm_all0_1[,5] == "*", 3]
+mod_ml_sent_glm_all0_1_sd <- mod_ml_sent_glm_all0_1$results[best_sent_glm_all0_1[,5] == "*", 5]
+mod_ml_sent_glm_all0_1_int_a <- mod_ml_sent_glm_all0_1_acc - (1.645 * mod_ml_sent_glm_all0_1_sd)
+mod_ml_sent_glm_all0_1_int_b <- mod_ml_sent_glm_all0_1_acc + (1.645 * mod_ml_sent_glm_all0_1_sd)
+mod_ml_sent_glm_all0_1_better <- ifelse(mod_ml_sent_glm_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_sent_rf_all0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "rf", trControl = Control)
+best_sent_rf_all0_1 <-print.train(mod_ml_sent_rf_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_rf_all_0_1 <- mod_ml_sent_rf_all0_1$resample$Accuracy
+mod_ml_sent_rf_all0_1_acc <- mod_ml_sent_rf_all0_1$results[best_sent_rf_all0_1[,4] == "*", 2]
+mod_ml_sent_rf_all0_1_sd <- mod_ml_sent_rf_all0_1$results[best_sent_rf_all0_1[,4] == "*", 4]
+mod_ml_sent_rf_all0_1_int_a <- mod_ml_sent_rf_all0_1_acc - (1.645 * mod_ml_sent_rf_all0_1_sd)
+mod_ml_sent_rf_all0_1_int_b <- mod_ml_sent_rf_all0_1_acc + (1.645 * mod_ml_sent_rf_all0_1_sd)
+mod_ml_sent_rf_all0_1_better <- ifelse(mod_ml_sent_rf_all0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_sent_bayes_all0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "naive_bayes", trControl = Control)
+best_sent_bayes_all0_1 <- print.train(mod_ml_sent_bayes_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_bayes_all_0_1 <- mod_ml_sent_bayes_all0_1$resample$Accuracy
+mod_ml_sent_bayes_all0_1_acc <- mod_ml_sent_bayes_all0_1$results[best_sent_bayes_all0_1[,4] == "*", 4]
+mod_ml_sent_bayes_all0_1_sd <- mod_ml_sent_bayes_all0_1$results[best_sent_bayes_all0_1[,4] == "*", 6]
+mod_ml_sent_bayes_all0_1_int_a <- mod_ml_sent_bayes_all0_1_acc - (1.645 * mod_ml_sent_bayes_all0_1_sd)
+mod_ml_sent_bayes_all0_1_int_b <- mod_ml_sent_bayes_all0_1_acc + (1.645 * mod_ml_sent_bayes_all0_1_sd)
+mod_ml_sent_bayes_all0_1_better <- ifelse(mod_ml_sent_bayes_all0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_sent_boost_all0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_sent_boost_all0_1 <- print.train(mod_ml_sent_boost_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_boost_all_0_1 <- mod_ml_sent_boost_all0_1$resample$Accuracy
+mod_ml_sent_boost_all0_1_acc <- mod_ml_sent_boost_all0_1$results[best_sent_boost_all0_1[,5] == "*", 5]
+mod_ml_sent_boost_all0_1_sd <- mod_ml_sent_boost_all0_1$results[best_sent_boost_all0_1[,5] == "*", 7]
+mod_ml_sent_boost_all0_1_int_a <- mod_ml_sent_boost_all0_1_acc - (1.645 * mod_ml_sent_boost_all0_1_sd)
+mod_ml_sent_boost_all0_1_int_b <- mod_ml_sent_boost_all0_1_acc + (1.645 * mod_ml_sent_boost_all0_1_sd)
+mod_ml_sent_boost_all0_1_better <- ifelse(mod_ml_sent_boost_all0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_sent_svml_all0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_sent_svml_all0_1 <- print.train(mod_ml_sent_svml_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svml_all_0_1 <- mod_ml_sent_svml_all0_1$resample$Accuracy
+mod_ml_sent_svml_all0_1_acc <- mod_ml_sent_svml_all0_1$results$Accuracy
+mod_ml_sent_svml_all0_1_sd <- mod_ml_sent_svml_all0_1$results$AccuracySD
+mod_ml_sent_svml_all0_1_int_a <- mod_ml_sent_svml_all0_1_acc - (1.645 * mod_ml_sent_svml_all0_1_sd)
+mod_ml_sent_svml_all0_1_int_b <- mod_ml_sent_svml_all0_1_acc + (1.645 * mod_ml_sent_svml_all0_1_sd)
+mod_ml_sent_svml_all0_1_better <- ifelse(mod_ml_sent_svml_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmp_all0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "svmPoly", 
+                               tuneLength = 3, trControl = Control, verbose = FALSE)
+best_sent_svmp_all0_1 <- print.train(mod_ml_sent_svmp_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmp_all_0_1 <- mod_ml_sent_svmp_all0_1$resample$Accuracy
+mod_ml_sent_svmp_all0_1_acc <- mod_ml_sent_svmp_all0_1$results[best_sent_svmp_all0_1[,6] == "*", 4]
+mod_ml_sent_svmp_all0_1_sd <- mod_ml_sent_svmp_all0_1$results[best_sent_svmp_all0_1[,6] == "*", 6]
+mod_ml_sent_svmp_all0_1_int_a <- mod_ml_sent_svmp_all0_1_acc - (1.645 * mod_ml_sent_svmp_all0_1_sd)
+mod_ml_sent_svmp_all0_1_int_b <- mod_ml_sent_svmp_all0_1_acc + (1.645 * mod_ml_sent_svmp_all0_1_sd)
+mod_ml_sent_svmp_all0_1_better <- ifelse(mod_ml_sent_svmp_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmr_all0_1 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "svmRadial", 
+                               tuneLength = 5, trControl = Control, verbose = FALSE)
+best_sent_svmr_all0_1 <- print.train(mod_ml_sent_svmr_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmr_all_0_1 <- mod_ml_sent_svmr_all0_1$resample$Accuracy
+mod_ml_sent_svmr_all0_1_acc <- mod_ml_sent_svmr_all0_1$results[best_sent_svmr_all0_1[,4] == "*", 3]
+mod_ml_sent_svmr_all0_1_sd <- mod_ml_sent_svmr_all0_1$results[best_sent_svmr_all0_1[,4] == "*", 5]
+mod_ml_sent_svmr_all0_1_int_a <- mod_ml_sent_svmr_all0_1_acc - (1.645 * mod_ml_sent_svmr_all0_1_sd)
+mod_ml_sent_svmr_all0_1_int_b <- mod_ml_sent_svmr_all0_1_acc + (1.645 * mod_ml_sent_svmr_all0_1_sd)
+mod_ml_sent_svmr_all0_1_better <- ifelse(mod_ml_sent_svmr_all0_1_int_a > 0.5, '+', '-')
+
+Comp_all0_1 <- resamples(list(bayes = mod_ml_sent_bayes_all0_1,
+                            logit = mod_ml_sent_glm_all0_1,
+                            rf = mod_ml_sent_rf_all0_1,
+                            boost = mod_ml_sent_boost_all0_1,
+                            svm_lin = mod_ml_sent_svml_all0_1, 
+                            svm_poly = mod_ml_sent_svmp_all0_1, 
+                            svm_rad = mod_ml_sent_svmr_all0_1))
+
+bwplot(Comp_all0_1, metric="Accuracy")
+
+#Новости и финансы, лаг 1-5
+set.seed(1234) #логит
+mod_ml_sent_glm_all1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "glmnet", trControl = Control)
+best_sent_glm_all1_5 <- print.train(mod_ml_sent_glm_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_glm_all_1_5 <- mod_ml_sent_glm_all1_5$resample$Accuracy
+mod_ml_sent_glm_all1_5_acc <- mod_ml_sent_glm_all1_5$results[best_sent_glm_all1_5[,5] == "*", 3]
+mod_ml_sent_glm_all1_5_sd <- mod_ml_sent_glm_all1_5$results[best_sent_glm_all1_5[,5] == "*", 5]
+mod_ml_sent_glm_all1_5_int_a <- mod_ml_sent_glm_all1_5_acc - (1.645 * mod_ml_sent_glm_all1_5_sd)
+mod_ml_sent_glm_all1_5_int_b <- mod_ml_sent_glm_all1_5_acc + (1.645 * mod_ml_sent_glm_all1_5_sd)
+mod_ml_sent_glm_all1_5_better <- ifelse(mod_ml_sent_glm_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_sent_rf_all1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "rf", trControl = Control)
+best_sent_rf_all1_5 <-print.train(mod_ml_sent_rf_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_rf_all_1_5 <- mod_ml_sent_rf_all1_5$resample$Accuracy
+mod_ml_sent_rf_all1_5_acc <- mod_ml_sent_rf_all1_5$results[best_sent_rf_all1_5[,4] == "*", 2]
+mod_ml_sent_rf_all1_5_sd <- mod_ml_sent_rf_all1_5$results[best_sent_rf_all1_5[,4] == "*", 4]
+mod_ml_sent_rf_all1_5_int_a <- mod_ml_sent_rf_all1_5_acc - (1.645 * mod_ml_sent_rf_all1_5_sd)
+mod_ml_sent_rf_all1_5_int_b <- mod_ml_sent_rf_all1_5_acc + (1.645 * mod_ml_sent_rf_all1_5_sd)
+mod_ml_sent_rf_all1_5_better <- ifelse(mod_ml_sent_rf_all1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_sent_bayes_all1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "naive_bayes", trControl = Control)
+best_sent_bayes_all1_5 <- print.train(mod_ml_sent_bayes_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_bayes_all_1_5 <- mod_ml_sent_bayes_all1_5$resample$Accuracy
+mod_ml_sent_bayes_all1_5_acc <- mod_ml_sent_bayes_all1_5$results[best_sent_bayes_all1_5[,4] == "*", 4]
+mod_ml_sent_bayes_all1_5_sd <- mod_ml_sent_bayes_all1_5$results[best_sent_bayes_all1_5[,4] == "*", 6]
+mod_ml_sent_bayes_all1_5_int_a <- mod_ml_sent_bayes_all1_5_acc - (1.645 * mod_ml_sent_bayes_all1_5_sd)
+mod_ml_sent_bayes_all1_5_int_b <- mod_ml_sent_bayes_all1_5_acc + (1.645 * mod_ml_sent_bayes_all1_5_sd)
+mod_ml_sent_bayes_all1_5_better <- ifelse(mod_ml_sent_bayes_all1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_sent_boost_all1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_sent_boost_all1_5 <- print.train(mod_ml_sent_boost_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_boost_all_1_5 <- mod_ml_sent_boost_all1_5$resample$Accuracy
+mod_ml_sent_boost_all1_5_acc <- mod_ml_sent_boost_all1_5$results[best_sent_boost_all1_5[,5] == "*", 5]
+mod_ml_sent_boost_all1_5_sd <- mod_ml_sent_boost_all1_5$results[best_sent_boost_all1_5[,5] == "*", 7]
+mod_ml_sent_boost_all1_5_int_a <- mod_ml_sent_boost_all1_5_acc - (1.645 * mod_ml_sent_boost_all1_5_sd)
+mod_ml_sent_boost_all1_5_int_b <- mod_ml_sent_boost_all1_5_acc + (1.645 * mod_ml_sent_boost_all1_5_sd)
+mod_ml_sent_boost_all1_5_better <- ifelse(mod_ml_sent_boost_all1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_sent_svml_all1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_sent_svml_all1_5 <- print.train(mod_ml_sent_svml_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svml_all_1_5 <- mod_ml_sent_svml_all1_5$resample$Accuracy
+mod_ml_sent_svml_all1_5_acc <- mod_ml_sent_svml_all1_5$results$Accuracy
+mod_ml_sent_svml_all1_5_sd <- mod_ml_sent_svml_all1_5$results$AccuracySD
+mod_ml_sent_svml_all1_5_int_a <- mod_ml_sent_svml_all1_5_acc - (1.645 * mod_ml_sent_svml_all1_5_sd)
+mod_ml_sent_svml_all1_5_int_b <- mod_ml_sent_svml_all1_5_acc + (1.645 * mod_ml_sent_svml_all1_5_sd)
+mod_ml_sent_svml_all1_5_better <- ifelse(mod_ml_sent_svml_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmp_all1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "svmPoly", 
+                                 tuneLength = 3, trControl = Control, verbose = FALSE)
+best_sent_svmp_all1_5 <- print.train(mod_ml_sent_svmp_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmp_all_1_5 <- mod_ml_sent_svmp_all1_5$resample$Accuracy
+mod_ml_sent_svmp_all1_5_acc <- mod_ml_sent_svmp_all1_5$results[best_sent_svmp_all1_5[,6] == "*", 4]
+mod_ml_sent_svmp_all1_5_sd <- mod_ml_sent_svmp_all1_5$results[best_sent_svmp_all1_5[,6] == "*", 6]
+mod_ml_sent_svmp_all1_5_int_a <- mod_ml_sent_svmp_all1_5_acc - (1.645 * mod_ml_sent_svmp_all1_5_sd)
+mod_ml_sent_svmp_all1_5_int_b <- mod_ml_sent_svmp_all1_5_acc + (1.645 * mod_ml_sent_svmp_all1_5_sd)
+mod_ml_sent_svmp_all1_5_better <- ifelse(mod_ml_sent_svmp_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_sent_svmr_all1_5 <- train(y = bmw_sent_ok$bin, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "svmRadial", 
+                                 tuneLength = 5, trControl = Control, verbose = FALSE)
+best_sent_svmr_all1_5 <- print.train(mod_ml_sent_svmr_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_svmr_all_1_5 <- mod_ml_sent_svmr_all1_5$resample$Accuracy
+mod_ml_sent_svmr_all1_5_acc <- mod_ml_sent_svmr_all1_5$results[best_sent_svmr_all1_5[,4] == "*", 3]
+mod_ml_sent_svmr_all1_5_sd <- mod_ml_sent_svmr_all1_5$results[best_sent_svmr_all1_5[,4] == "*", 5]
+mod_ml_sent_svmr_all1_5_int_a <- mod_ml_sent_svmr_all1_5_acc - (1.645 * mod_ml_sent_svmr_all1_5_sd)
+mod_ml_sent_svmr_all1_5_int_b <- mod_ml_sent_svmr_all1_5_acc + (1.645 * mod_ml_sent_svmr_all1_5_sd)
+mod_ml_sent_svmr_all1_5_better <- ifelse(mod_ml_sent_svmr_all1_5_int_a > 0.5, '+', '-')
+
+Comp_all1_5 <- resamples(list(bayes = mod_ml_sent_bayes_all1_5,
+                              logit = mod_ml_sent_glm_all1_5,
+                              rf = mod_ml_sent_rf_all1_5,
+                              boost = mod_ml_sent_boost_all1_5,
+                              svm_lin = mod_ml_sent_svml_all1_5, 
+                              svm_poly = mod_ml_sent_svmp_all1_5, 
+                              svm_rad = mod_ml_sent_svmr_all1_5))
+
+bwplot(Comp_all1_5, metric="Accuracy")
+
+#Таблица для этого всего 
+ml_accuracy <- c(mod_ml_sent_glm_fin_acc, mod_ml_sent_rf_fin_acc, mod_ml_sent_bayes_fin_acc, 
+                 mod_ml_sent_boost_fin_acc, mod_ml_sent_svml_fin_acc, mod_ml_sent_svmp_fin_acc, mod_ml_sent_svmr_fin_acc, 
+                 mod_ml_sent_glm_n0_1_acc, mod_ml_sent_rf_n0_1_acc, mod_ml_sent_bayes_n0_1_acc, 
+                 mod_ml_sent_boost_n0_1_acc, mod_ml_sent_svml_n0_1_acc, mod_ml_sent_svmp_n0_1_acc, mod_ml_sent_svmr_n0_1_acc,
+                 mod_ml_sent_glm_n1_5_acc, mod_ml_sent_rf_n1_5_acc, mod_ml_sent_bayes_n1_5_acc, 
+                 mod_ml_sent_boost_n1_5_acc, mod_ml_sent_svml_n1_5_acc, mod_ml_sent_svmp_n1_5_acc, mod_ml_sent_svmr_n1_5_acc,
+                 mod_ml_sent_glm_all0_1_acc, mod_ml_sent_rf_all0_1_acc, mod_ml_sent_bayes_all0_1_acc, 
+                 mod_ml_sent_boost_all0_1_acc, mod_ml_sent_svml_all0_1_acc, mod_ml_sent_svmp_all0_1_acc, mod_ml_sent_svmr_all0_1_acc, 
+                 mod_ml_sent_glm_all1_5_acc, mod_ml_sent_rf_all1_5_acc, mod_ml_sent_bayes_all1_5_acc, 
+                 mod_ml_sent_boost_all1_5_acc, mod_ml_sent_svml_all1_5_acc, mod_ml_sent_svmp_all1_5_acc, mod_ml_sent_svmr_all1_5_acc)
+
+ml_sd_a <- c(mod_ml_sent_glm_fin_int_a, mod_ml_sent_rf_fin_int_a, mod_ml_sent_bayes_fin_int_a, 
+             mod_ml_sent_boost_fin_int_a, mod_ml_sent_svml_fin_int_a, mod_ml_sent_svmp_fin_int_a, mod_ml_sent_svmr_fin_int_a, 
+             mod_ml_sent_glm_n0_1_int_a, mod_ml_sent_rf_n0_1_int_a, mod_ml_sent_bayes_n0_1_int_a, 
+             mod_ml_sent_boost_n0_1_int_a, mod_ml_sent_svml_n0_1_int_a, mod_ml_sent_svmp_n0_1_int_a, mod_ml_sent_svmr_n0_1_int_a,
+             mod_ml_sent_glm_n1_5_int_a, mod_ml_sent_rf_n1_5_int_a, mod_ml_sent_bayes_n1_5_int_a, 
+             mod_ml_sent_boost_n1_5_int_a, mod_ml_sent_svml_n1_5_int_a, mod_ml_sent_svmp_n1_5_int_a, mod_ml_sent_svmr_n1_5_int_a,
+             mod_ml_sent_glm_all0_1_int_a, mod_ml_sent_rf_all0_1_int_a, mod_ml_sent_bayes_all0_1_int_a, 
+             mod_ml_sent_boost_all0_1_int_a, mod_ml_sent_svml_all0_1_int_a, mod_ml_sent_svmp_all0_1_int_a, mod_ml_sent_svmr_all0_1_int_a, 
+             mod_ml_sent_glm_all1_5_int_a, mod_ml_sent_rf_all1_5_int_a, mod_ml_sent_bayes_all1_5_int_a, 
+             mod_ml_sent_boost_all1_5_int_a, mod_ml_sent_svml_all1_5_int_a, mod_ml_sent_svmp_all1_5_int_a, mod_ml_sent_svmr_all1_5_int_a)
+
+ml_sd_b <- c(mod_ml_sent_glm_fin_int_b, mod_ml_sent_rf_fin_int_b, mod_ml_sent_bayes_fin_int_b, 
+             mod_ml_sent_boost_fin_int_b, mod_ml_sent_svml_fin_int_b, mod_ml_sent_svmp_fin_int_b, mod_ml_sent_svmr_fin_int_b, 
+             mod_ml_sent_glm_n0_1_int_b, mod_ml_sent_rf_n0_1_int_b, mod_ml_sent_bayes_n0_1_int_b, 
+             mod_ml_sent_boost_n0_1_int_b, mod_ml_sent_svml_n0_1_int_b, mod_ml_sent_svmp_n0_1_int_b, mod_ml_sent_svmr_n0_1_int_b,
+             mod_ml_sent_glm_n1_5_int_b, mod_ml_sent_rf_n1_5_int_b, mod_ml_sent_bayes_n1_5_int_b, 
+             mod_ml_sent_boost_n1_5_int_b, mod_ml_sent_svml_n1_5_int_b, mod_ml_sent_svmp_n1_5_int_b, mod_ml_sent_svmr_n1_5_int_b,
+             mod_ml_sent_glm_all0_1_int_b, mod_ml_sent_rf_all0_1_int_b, mod_ml_sent_bayes_all0_1_int_b, 
+             mod_ml_sent_boost_all0_1_int_b, mod_ml_sent_svml_all0_1_int_b, mod_ml_sent_svmp_all0_1_int_b, mod_ml_sent_svmr_all0_1_int_b, 
+             mod_ml_sent_glm_all1_5_int_b, mod_ml_sent_rf_all1_5_int_b, mod_ml_sent_bayes_all1_5_int_b, 
+             mod_ml_sent_boost_all1_5_int_b, mod_ml_sent_svml_all1_5_int_b, mod_ml_sent_svmp_all1_5_int_b, mod_ml_sent_svmr_all1_5_int_b)
+
+ml_better <- c(mod_ml_sent_glm_fin_better, mod_ml_sent_rf_fin_better, mod_ml_sent_bayes_fin_better, 
+               mod_ml_sent_boost_fin_better, mod_ml_sent_svml_fin_better, mod_ml_sent_svmp_fin_better, mod_ml_sent_svmr_fin_better, 
+               mod_ml_sent_glm_n0_1_better, mod_ml_sent_rf_n0_1_better, mod_ml_sent_bayes_n0_1_better, 
+               mod_ml_sent_boost_n0_1_better, mod_ml_sent_svml_n0_1_better, mod_ml_sent_svmp_n0_1_better, mod_ml_sent_svmr_n0_1_better,
+               mod_ml_sent_glm_n1_5_better, mod_ml_sent_rf_n1_5_better, mod_ml_sent_bayes_n1_5_better, 
+               mod_ml_sent_boost_n1_5_better, mod_ml_sent_svml_n1_5_better, mod_ml_sent_svmp_n1_5_better, mod_ml_sent_svmr_n1_5_better,
+               mod_ml_sent_glm_all0_1_better, mod_ml_sent_rf_all0_1_better, mod_ml_sent_bayes_all0_1_better, 
+               mod_ml_sent_boost_all0_1_better, mod_ml_sent_svml_all0_1_better, mod_ml_sent_svmp_all0_1_better, mod_ml_sent_svmr_all0_1_better, 
+               mod_ml_sent_glm_all1_5_better, mod_ml_sent_rf_all1_5_better, mod_ml_sent_bayes_all1_5_better, 
+               mod_ml_sent_boost_all1_5_better, mod_ml_sent_svml_all1_5_better, mod_ml_sent_svmp_all1_5_better, mod_ml_sent_svmr_all1_5_better)
+ml_type <- c('Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial', 
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial')
+
+table_ml_sent <- data.frame(ml_type, ml_sd_a, ml_sd_b, ml_accuracy, ml_better)
+
+rownames(table_ml_sent)[1] <- 'Использование только финансовой нформации'
+rownames(table_ml_sent)[8] <- 'Использование только новостной информации (текущая и первый лаг)'
+rownames(table_ml_sent)[15] <- 'Использование лагированной новостной информации'
+rownames(table_ml_sent)[22] <- 'Оба канала информации (текущая и первый лаг)'
+rownames(table_ml_sent)[29] <- 'Оба канала информации (новости ланированные)'
+
+table_ml_sent$ml_sd_a <- round(table_ml_sent$ml_sd_a, 4)
+table_ml_sent$ml_sd_b <- round(table_ml_sent$ml_sd_b, 4)
+table_ml_sent$ml_accuracy <- round(table_ml_sent$ml_accuracy, 4)
+
+table_ml_sent
+
+#Выгрузим
+table_ml_sent_done_bmw <- table_ml_sent %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование методов машинного обучения для классификации доходностей на разных источниках данных")
+  ) 
+gtsave(table_ml_sent_done_bmw, filename = 'table_ml_sent_done_bmw.html')
+
+
+
+
+#### Логит на чистых данных ####
+k <- median(abs(bmw_sent_ok$yield))
+bmw_sent_ok$big <- ifelse(abs(bmw_sent_ok$yield) > k, 1, 0)
+sum(bmw_sent_ok$big)
+bmw_sent_ok$big <- as.factor(bmw_sent_ok$big)
+#Все то же самое, но по-другому
+#Модели только на финансах - 2 лага 
+set.seed(1234) #логит
+mod_b_ml_sent_glm_fin <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,12:13],  method = "glmnet", trControl = Control)
+best_b_sent_glm_fin <- print.train(mod_b_ml_sent_glm_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_glm_f <- mod_b_ml_sent_glm_fin$resample$Accuracy
+mod_b_ml_sent_glm_fin_acc <- mod_b_ml_sent_glm_fin$results[best_b_sent_glm_fin[,5] == "*", 3]
+mod_b_ml_sent_glm_fin_sd <- mod_b_ml_sent_glm_fin$results[best_b_sent_glm_fin[,5] == "*", 5]
+mod_b_ml_sent_glm_fin_int_a <- mod_b_ml_sent_glm_fin_acc - (1.645 * mod_b_ml_sent_glm_fin_sd)
+mod_b_ml_sent_glm_fin_int_b <- mod_b_ml_sent_glm_fin_acc + (1.645 * mod_b_ml_sent_glm_fin_sd)
+mod_b_ml_sent_glm_fin_better <- ifelse(mod_b_ml_sent_glm_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_sent_rf_fin <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,12:13],  method = "rf", trControl = Control)
+best_b_sent_rf_fin <-print.train(mod_b_ml_sent_rf_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_rf_f <- mod_b_ml_sent_rf_fin$resample$Accuracy
+mod_b_ml_sent_rf_fin_acc <- mod_b_ml_sent_rf_fin$results$Accuracy
+mod_b_ml_sent_rf_fin_sd <- mod_b_ml_sent_rf_fin$results$AccuracySD
+mod_b_ml_sent_rf_fin_int_a <- mod_b_ml_sent_rf_fin_acc - (1.645 * mod_b_ml_sent_rf_fin_sd)
+mod_b_ml_sent_rf_fin_int_b <- mod_b_ml_sent_rf_fin_acc + (1.645 * mod_b_ml_sent_rf_fin_sd)
+mod_b_ml_sent_rf_fin_better <- ifelse(mod_b_ml_sent_rf_fin_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_sent_bayes_fin <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,12:13],  method = "naive_bayes", trControl = Control)
+best_b_sent_bayes_fin <- print.train(mod_b_ml_sent_bayes_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_bayes_f <- mod_b_ml_sent_bayes_fin$resample$Accuracy
+mod_b_ml_sent_bayes_fin_acc <- mod_b_ml_sent_bayes_fin$results[best_b_sent_bayes_fin[,4] == "*", 4]
+mod_b_ml_sent_bayes_fin_sd <- mod_b_ml_sent_bayes_fin$results[best_b_sent_bayes_fin[,4] == "*", 6]
+mod_b_ml_sent_bayes_fin_int_a <- mod_b_ml_sent_bayes_fin_acc - (1.645 * mod_b_ml_sent_bayes_fin_sd)
+mod_b_ml_sent_bayes_fin_int_b <- mod_b_ml_sent_bayes_fin_acc + (1.645 * mod_b_ml_sent_bayes_fin_sd)
+mod_b_ml_sent_bayes_fin_better <- ifelse(mod_b_ml_sent_bayes_fin_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_sent_boost_fin <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,12:13],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_sent_boost_fin <- print.train(mod_b_ml_sent_boost_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_boost_f <- mod_b_ml_sent_boost_fin$resample$Accuracy
+mod_b_ml_sent_boost_fin_acc <- mod_b_ml_sent_boost_fin$results[best_b_sent_boost_fin[,5] == "*", 5]
+mod_b_ml_sent_boost_fin_sd <- mod_b_ml_sent_boost_fin$results[best_b_sent_boost_fin[,5] == "*", 7]
+mod_b_ml_sent_boost_fin_int_a <- mod_b_ml_sent_boost_fin_acc - (1.645 * mod_b_ml_sent_boost_fin_sd)
+mod_b_ml_sent_boost_fin_int_b <- mod_b_ml_sent_boost_fin_acc + (1.645 * mod_b_ml_sent_boost_fin_sd)
+mod_b_ml_sent_boost_fin_better <- ifelse(mod_b_ml_sent_boost_fin_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_sent_svml_fin <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,12:13],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_sent_svml_fin <- print.train(mod_b_ml_sent_svml_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svml_f <- mod_b_ml_sent_svml_fin$resample$Accuracy
+mod_b_ml_sent_svml_fin_acc <- mod_b_ml_sent_svml_fin$results$Accuracy
+mod_b_ml_sent_svml_fin_sd <- mod_b_ml_sent_svml_fin$results$AccuracySD
+mod_b_ml_sent_svml_fin_int_a <- mod_b_ml_sent_svml_fin_acc - (1.645 * mod_b_ml_sent_svml_fin_sd)
+mod_b_ml_sent_svml_fin_int_b <- mod_b_ml_sent_svml_fin_acc + (1.645 * mod_b_ml_sent_svml_fin_sd)
+mod_b_ml_sent_svml_fin_better <- ifelse(mod_b_ml_sent_svml_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmp_fin <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,12:13],  method = "svmPoly", 
+                              tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_sent_svmp_fin <- print.train(mod_b_ml_sent_svmp_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmp_f <- mod_b_ml_sent_svmp_fin$resample$Accuracy
+mod_b_ml_sent_svmp_fin_acc <- mod_b_ml_sent_svmp_fin$results[best_b_sent_svmp_fin[,6] == "*", 4]
+mod_b_ml_sent_svmp_fin_sd <- mod_b_ml_sent_svmp_fin$results[best_b_sent_svmp_fin[,6] == "*", 6]
+mod_b_ml_sent_svmp_fin_int_a <- mod_b_ml_sent_svmp_fin_acc - (1.645 * mod_b_ml_sent_svmp_fin_sd)
+mod_b_ml_sent_svmp_fin_int_b <- mod_b_ml_sent_svmp_fin_acc + (1.645 * mod_b_ml_sent_svmp_fin_sd)
+mod_b_ml_sent_svmp_fin_better <- ifelse(mod_b_ml_sent_svmp_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmr_fin <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,12:13],  method = "svmRadial", 
+                              tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_sent_svmr_fin <- print.train(mod_b_ml_sent_svmr_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmr_f <- mod_b_ml_sent_svmr_fin$resample$Accuracy
+mod_b_ml_sent_svmr_fin_acc <- mod_b_ml_sent_svmr_fin$results[best_b_sent_svmr_fin[,4] == "*", 3]
+mod_b_ml_sent_svmr_fin_sd <- mod_b_ml_sent_svmr_fin$results[best_b_sent_svmr_fin[,4] == "*", 5]
+mod_b_ml_sent_svmr_fin_int_a <- mod_b_ml_sent_svmr_fin_acc - (1.645 * mod_b_ml_sent_svmr_fin_sd)
+mod_b_ml_sent_svmr_fin_int_b <- mod_b_ml_sent_svmr_fin_acc + (1.645 * mod_b_ml_sent_svmr_fin_sd)
+mod_b_ml_sent_svmr_fin_better <- ifelse(mod_b_ml_sent_svmr_fin_int_a > 0.5, '+', '-')
+
+Comp_fin <- resamples(list(bayes = mod_b_ml_sent_bayes_fin,
+                           logit = mod_b_ml_sent_glm_fin,
+                           rf = mod_b_ml_sent_rf_fin,
+                           boost = mod_b_ml_sent_boost_fin,
+                           svm_lin = mod_b_ml_sent_svml_fin, 
+                           svm_poly = mod_b_ml_sent_svmp_fin, 
+                           svm_rad = mod_b_ml_sent_svmr_fin))
+
+bwplot(Comp_fin, metric="Accuracy")  
+
+#Модели только на новостях текущий и лаг один
+set.seed(1234) #логит
+mod_b_ml_sent_glm_n0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,4:5],  method = "glmnet", trControl = Control)
+best_b_sent_glm_n0_1 <- print.train(mod_b_ml_sent_glm_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_glm_n_0_1 <- mod_b_ml_sent_glm_n0_1$resample$Accuracy
+mod_b_ml_sent_glm_n0_1_acc <- mod_b_ml_sent_glm_n0_1$results[best_b_sent_glm_n0_1[,5] == "*", 3]
+mod_b_ml_sent_glm_n0_1_sd <- mod_b_ml_sent_glm_n0_1$results[best_b_sent_glm_n0_1[,5] == "*", 5]
+mod_b_ml_sent_glm_n0_1_int_a <- mod_b_ml_sent_glm_n0_1_acc - (1.645 * mod_b_ml_sent_glm_n0_1_sd)
+mod_b_ml_sent_glm_n0_1_int_b <- mod_b_ml_sent_glm_n0_1_acc + (1.645 * mod_b_ml_sent_glm_n0_1_sd)
+mod_b_ml_sent_glm_n0_1_better <- ifelse(mod_b_ml_sent_glm_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_sent_rf_n0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,4:5],  method = "rf", trControl = Control)
+best_b_sent_rf_n0_1 <-print.train(mod_b_ml_sent_rf_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_rf_n_0_1 <- mod_b_ml_sent_rf_n0_1$resample$Accuracy
+mod_b_ml_sent_rf_n0_1_acc <- mod_b_ml_sent_rf_n0_1$results$Accuracy
+mod_b_ml_sent_rf_n0_1_sd <- mod_b_ml_sent_rf_n0_1$results$AccuracySD
+mod_b_ml_sent_rf_n0_1_int_a <- mod_b_ml_sent_rf_n0_1_acc - (1.645 * mod_b_ml_sent_rf_n0_1_sd)
+mod_b_ml_sent_rf_n0_1_int_b <- mod_b_ml_sent_rf_n0_1_acc + (1.645 * mod_b_ml_sent_rf_n0_1_sd)
+mod_b_ml_sent_rf_n0_1_better <- ifelse(mod_b_ml_sent_rf_n0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_sent_bayes_n0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,4:5],  method = "naive_bayes", trControl = Control)
+best_b_sent_bayes_n0_1 <- print.train(mod_b_ml_sent_bayes_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_bayes_n_0_1 <- mod_b_ml_sent_bayes_n0_1$resample$Accuracy
+mod_b_ml_sent_bayes_n0_1_acc <- mod_b_ml_sent_bayes_n0_1$results[best_b_sent_bayes_n0_1[,4] == "*", 4]
+mod_b_ml_sent_bayes_n0_1_sd <- mod_b_ml_sent_bayes_n0_1$results[best_b_sent_bayes_n0_1[,4] == "*", 6]
+mod_b_ml_sent_bayes_n0_1_int_a <- mod_b_ml_sent_bayes_n0_1_acc - (1.645 * mod_b_ml_sent_bayes_n0_1_sd)
+mod_b_ml_sent_bayes_n0_1_int_b <- mod_b_ml_sent_bayes_n0_1_acc + (1.645 * mod_b_ml_sent_bayes_n0_1_sd)
+mod_b_ml_sent_bayes_n0_1_better <- ifelse(mod_b_ml_sent_bayes_n0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_sent_boost_n0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,4:5],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_sent_boost_n0_1 <- print.train(mod_b_ml_sent_boost_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_boost_n_0_1 <- mod_b_ml_sent_boost_n0_1$resample$Accuracy
+mod_b_ml_sent_boost_n0_1_acc <- mod_b_ml_sent_boost_n0_1$results[best_b_sent_boost_n0_1[,5] == "*", 5]
+mod_b_ml_sent_boost_n0_1_sd <- mod_b_ml_sent_boost_n0_1$results[best_b_sent_boost_n0_1[,5] == "*", 7]
+mod_b_ml_sent_boost_n0_1_int_a <- mod_b_ml_sent_boost_n0_1_acc - (1.645 * mod_b_ml_sent_boost_n0_1_sd)
+mod_b_ml_sent_boost_n0_1_int_b <- mod_b_ml_sent_boost_n0_1_acc + (1.645 * mod_b_ml_sent_boost_n0_1_sd)
+mod_b_ml_sent_boost_n0_1_better <- ifelse(mod_b_ml_sent_boost_n0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_sent_svml_n0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,4:5],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_sent_svml_n0_1 <- print.train(mod_b_ml_sent_svml_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svml_n_0_1 <- mod_b_ml_sent_svml_n0_1$resample$Accuracy
+mod_b_ml_sent_svml_n0_1_acc <- mod_b_ml_sent_svml_n0_1$results$Accuracy
+mod_b_ml_sent_svml_n0_1_sd <- mod_b_ml_sent_svml_n0_1$results$AccuracySD
+mod_b_ml_sent_svml_n0_1_int_a <- mod_b_ml_sent_svml_n0_1_acc - (1.645 * mod_b_ml_sent_svml_n0_1_sd)
+mod_b_ml_sent_svml_n0_1_int_b <- mod_b_ml_sent_svml_n0_1_acc + (1.645 * mod_b_ml_sent_svml_n0_1_sd)
+mod_b_ml_sent_svml_n0_1_better <- ifelse(mod_b_ml_sent_svml_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmp_n0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,4:5],  method = "svmPoly", 
+                               tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_sent_svmp_n0_1 <- print.train(mod_b_ml_sent_svmp_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmp_n_0_1 <- mod_b_ml_sent_svmp_n0_1$resample$Accuracy
+mod_b_ml_sent_svmp_n0_1_acc <- mod_b_ml_sent_svmp_n0_1$results[best_b_sent_svmp_n0_1[,6] == "*", 4]
+mod_b_ml_sent_svmp_n0_1_sd <- mod_b_ml_sent_svmp_n0_1$results[best_b_sent_svmp_n0_1[,6] == "*", 6]
+mod_b_ml_sent_svmp_n0_1_int_a <- mod_b_ml_sent_svmp_n0_1_acc - (1.645 * mod_b_ml_sent_svmp_n0_1_sd)
+mod_b_ml_sent_svmp_n0_1_int_b <- mod_b_ml_sent_svmp_n0_1_acc + (1.645 * mod_b_ml_sent_svmp_n0_1_sd)
+mod_b_ml_sent_svmp_n0_1_better <- ifelse(mod_b_ml_sent_svmp_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmr_n0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,4:5],  method = "svmRadial", 
+                               tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_sent_svmr_n0_1 <- print.train(mod_b_ml_sent_svmr_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmr_n_0_1 <- mod_b_ml_sent_svmr_n0_1$resample$Accuracy
+mod_b_ml_sent_svmr_n0_1_acc <- mod_b_ml_sent_svmr_n0_1$results[best_b_sent_svmr_n0_1[,4] == "*", 3]
+mod_b_ml_sent_svmr_n0_1_sd <- mod_b_ml_sent_svmr_n0_1$results[best_b_sent_svmr_n0_1[,4] == "*", 5]
+mod_b_ml_sent_svmr_n0_1_int_a <- mod_b_ml_sent_svmr_n0_1_acc - (1.645 * mod_b_ml_sent_svmr_n0_1_sd)
+mod_b_ml_sent_svmr_n0_1_int_b <- mod_b_ml_sent_svmr_n0_1_acc + (1.645 * mod_b_ml_sent_svmr_n0_1_sd)
+mod_b_ml_sent_svmr_n0_1_better <- ifelse(mod_b_ml_sent_svmr_n0_1_int_a > 0.5, '+', '-')
+
+Comp_n0_1 <- resamples(list(bayes = mod_b_ml_sent_bayes_n0_1,
+                            logit = mod_b_ml_sent_glm_n0_1,
+                            rf = mod_b_ml_sent_rf_n0_1,
+                            boost = mod_b_ml_sent_boost_n0_1,
+                            svm_lin = mod_b_ml_sent_svml_n0_1, 
+                            svm_poly = mod_b_ml_sent_svmp_n0_1, 
+                            svm_rad = mod_b_ml_sent_svmr_n0_1))
+
+bwplot(Comp_n0_1, metric="Accuracy")  
+
+#Теперь новости лаг1 - лаг5
+set.seed(1234) #логит
+mod_b_ml_sent_glm_n1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,5:9],  method = "glmnet", trControl = Control)
+best_b_sent_glm_n1_5 <- print.train(mod_b_ml_sent_glm_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_glm_n_1_5 <- mod_b_ml_sent_glm_n1_5$resample$Accuracy
+mod_b_ml_sent_glm_n1_5_acc <- mod_b_ml_sent_glm_n1_5$results[best_b_sent_glm_n1_5[,5] == "*", 3]
+mod_b_ml_sent_glm_n1_5_sd <- mod_b_ml_sent_glm_n1_5$results[best_b_sent_glm_n1_5[,5] == "*", 5]
+mod_b_ml_sent_glm_n1_5_int_a <- mod_b_ml_sent_glm_n1_5_acc - (1.645 * mod_b_ml_sent_glm_n1_5_sd)
+mod_b_ml_sent_glm_n1_5_int_b <- mod_b_ml_sent_glm_n1_5_acc + (1.645 * mod_b_ml_sent_glm_n1_5_sd)
+mod_b_ml_sent_glm_n1_5_better <- ifelse(mod_b_ml_sent_glm_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_sent_rf_n1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,5:9],  method = "rf", trControl = Control)
+best_b_sent_rf_n1_5 <-print.train(mod_b_ml_sent_rf_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_rf_n_1_5 <- mod_b_ml_sent_rf_n1_5$resample$Accuracy
+mod_b_ml_sent_rf_n1_5_acc <- mod_b_ml_sent_rf_n1_5$results[best_b_sent_rf_n1_5[,4] == "*", 2]
+mod_b_ml_sent_rf_n1_5_sd <- mod_b_ml_sent_rf_n1_5$results[best_b_sent_rf_n1_5[,4] == "*", 4]
+mod_b_ml_sent_rf_n1_5_int_a <- mod_b_ml_sent_rf_n1_5_acc - (1.645 * mod_b_ml_sent_rf_n1_5_sd)
+mod_b_ml_sent_rf_n1_5_int_b <- mod_b_ml_sent_rf_n1_5_acc + (1.645 * mod_b_ml_sent_rf_n1_5_sd)
+mod_b_ml_sent_rf_n1_5_better <- ifelse(mod_b_ml_sent_rf_n1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_sent_bayes_n1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,5:9],  method = "naive_bayes", trControl = Control)
+best_b_sent_bayes_n1_5 <- print.train(mod_b_ml_sent_bayes_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_bayes_n_1_5 <- mod_b_ml_sent_bayes_n1_5$resample$Accuracy
+mod_b_ml_sent_bayes_n1_5_acc <- mod_b_ml_sent_bayes_n1_5$results[best_b_sent_bayes_n1_5[,4] == "*", 4]
+mod_b_ml_sent_bayes_n1_5_sd <- mod_b_ml_sent_bayes_n1_5$results[best_b_sent_bayes_n1_5[,4] == "*", 6]
+mod_b_ml_sent_bayes_n1_5_int_a <- mod_b_ml_sent_bayes_n1_5_acc - (1.645 * mod_b_ml_sent_bayes_n1_5_sd)
+mod_b_ml_sent_bayes_n1_5_int_b <- mod_b_ml_sent_bayes_n1_5_acc + (1.645 * mod_b_ml_sent_bayes_n1_5_sd)
+mod_b_ml_sent_bayes_n1_5_better <- ifelse(mod_b_ml_sent_bayes_n1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_sent_boost_n1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,5:9],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_sent_boost_n1_5 <- print.train(mod_b_ml_sent_boost_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_boost_n_1_5 <- mod_b_ml_sent_boost_n1_5$resample$Accuracy
+mod_b_ml_sent_boost_n1_5_acc <- mod_b_ml_sent_boost_n1_5$results[best_b_sent_boost_n1_5[,5] == "*", 5]
+mod_b_ml_sent_boost_n1_5_sd <- mod_b_ml_sent_boost_n1_5$results[best_b_sent_boost_n1_5[,5] == "*", 7]
+mod_b_ml_sent_boost_n1_5_int_a <- mod_b_ml_sent_boost_n1_5_acc - (1.645 * mod_b_ml_sent_boost_n1_5_sd)
+mod_b_ml_sent_boost_n1_5_int_b <- mod_b_ml_sent_boost_n1_5_acc + (1.645 * mod_b_ml_sent_boost_n1_5_sd)
+mod_b_ml_sent_boost_n1_5_better <- ifelse(mod_b_ml_sent_boost_n1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_sent_svml_n1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,5:9],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_sent_svml_n1_5 <- print.train(mod_b_ml_sent_svml_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svml_n_1_5 <- mod_b_ml_sent_svml_n1_5$resample$Accuracy
+mod_b_ml_sent_svml_n1_5_acc <- mod_b_ml_sent_svml_n1_5$results$Accuracy
+mod_b_ml_sent_svml_n1_5_sd <- mod_b_ml_sent_svml_n1_5$results$AccuracySD
+mod_b_ml_sent_svml_n1_5_int_a <- mod_b_ml_sent_svml_n1_5_acc - (1.645 * mod_b_ml_sent_svml_n1_5_sd)
+mod_b_ml_sent_svml_n1_5_int_b <- mod_b_ml_sent_svml_n1_5_acc + (1.645 * mod_b_ml_sent_svml_n1_5_sd)
+mod_b_ml_sent_svml_n1_5_better <- ifelse(mod_b_ml_sent_svml_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmp_n1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,5:9],  method = "svmPoly", 
+                               tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_sent_svmp_n1_5 <- print.train(mod_b_ml_sent_svmp_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmp_n_1_5 <- mod_b_ml_sent_svmp_n1_5$resample$Accuracy
+mod_b_ml_sent_svmp_n1_5_acc <- mod_b_ml_sent_svmp_n1_5$results[best_b_sent_svmp_n1_5[,6] == "*", 4]
+mod_b_ml_sent_svmp_n1_5_sd <- mod_b_ml_sent_svmp_n1_5$results[best_b_sent_svmp_n1_5[,6] == "*", 6]
+mod_b_ml_sent_svmp_n1_5_int_a <- mod_b_ml_sent_svmp_n1_5_acc - (1.645 * mod_b_ml_sent_svmp_n1_5_sd)
+mod_b_ml_sent_svmp_n1_5_int_b <- mod_b_ml_sent_svmp_n1_5_acc + (1.645 * mod_b_ml_sent_svmp_n1_5_sd)
+mod_b_ml_sent_svmp_n1_5_better <- ifelse(mod_b_ml_sent_svmp_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmr_n1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,5:9],  method = "svmRadial", 
+                               tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_sent_svmr_n1_5 <- print.train(mod_b_ml_sent_svmr_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmr_n_1_5 <- mod_b_ml_sent_svmr_n1_5$resample$Accuracy
+mod_b_ml_sent_svmr_n1_5_acc <- mod_b_ml_sent_svmr_n1_5$results[best_b_sent_svmr_n1_5[,4] == "*", 3]
+mod_b_ml_sent_svmr_n1_5_sd <- mod_b_ml_sent_svmr_n1_5$results[best_b_sent_svmr_n1_5[,4] == "*", 5]
+mod_b_ml_sent_svmr_n1_5_int_a <- mod_b_ml_sent_svmr_n1_5_acc - (1.645 * mod_b_ml_sent_svmr_n1_5_sd)
+mod_b_ml_sent_svmr_n1_5_int_b <- mod_b_ml_sent_svmr_n1_5_acc + (1.645 * mod_b_ml_sent_svmr_n1_5_sd)
+mod_b_ml_sent_svmr_n1_5_better <- ifelse(mod_b_ml_sent_svmr_n1_5_int_a > 0.5, '+', '-')
+
+Comp_n1_5 <- resamples(list(bayes = mod_b_ml_sent_bayes_n1_5,
+                            logit = mod_b_ml_sent_glm_n1_5,
+                            rf = mod_b_ml_sent_rf_n1_5,
+                            boost = mod_b_ml_sent_boost_n1_5,
+                            svm_lin = mod_b_ml_sent_svml_n1_5, 
+                            svm_poly = mod_b_ml_sent_svmp_n1_5, 
+                            svm_rad = mod_b_ml_sent_svmr_n1_5))
+
+bwplot(Comp_n1_5, metric="Accuracy")  
+
+#Новости и финансы, лаг 0-1
+set.seed(1234) #логит
+mod_b_ml_sent_glm_all0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "glmnet", trControl = Control)
+best_b_sent_glm_all0_1 <- print.train(mod_b_ml_sent_glm_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_glm_all_0_1 <- mod_b_ml_sent_glm_all0_1$resample$Accuracy
+mod_b_ml_sent_glm_all0_1_acc <- mod_b_ml_sent_glm_all0_1$results[best_b_sent_glm_all0_1[,5] == "*", 3]
+mod_b_ml_sent_glm_all0_1_sd <- mod_b_ml_sent_glm_all0_1$results[best_b_sent_glm_all0_1[,5] == "*", 5]
+mod_b_ml_sent_glm_all0_1_int_a <- mod_b_ml_sent_glm_all0_1_acc - (1.645 * mod_b_ml_sent_glm_all0_1_sd)
+mod_b_ml_sent_glm_all0_1_int_b <- mod_b_ml_sent_glm_all0_1_acc + (1.645 * mod_b_ml_sent_glm_all0_1_sd)
+mod_b_ml_sent_glm_all0_1_better <- ifelse(mod_b_ml_sent_glm_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_sent_rf_all0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "rf", trControl = Control)
+best_b_sent_rf_all0_1 <-print.train(mod_b_ml_sent_rf_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_rf_all_0_1 <- mod_b_ml_sent_rf_all0_1$resample$Accuracy
+mod_b_ml_sent_rf_all0_1_acc <- mod_b_ml_sent_rf_all0_1$results[best_b_sent_rf_all0_1[,4] == "*", 2]
+mod_b_ml_sent_rf_all0_1_sd <- mod_b_ml_sent_rf_all0_1$results[best_b_sent_rf_all0_1[,4] == "*", 4]
+mod_b_ml_sent_rf_all0_1_int_a <- mod_b_ml_sent_rf_all0_1_acc - (1.645 * mod_b_ml_sent_rf_all0_1_sd)
+mod_b_ml_sent_rf_all0_1_int_b <- mod_b_ml_sent_rf_all0_1_acc + (1.645 * mod_b_ml_sent_rf_all0_1_sd)
+mod_b_ml_sent_rf_all0_1_better <- ifelse(mod_b_ml_sent_rf_all0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_sent_bayes_all0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "naive_bayes", trControl = Control)
+best_b_sent_bayes_all0_1 <- print.train(mod_b_ml_sent_bayes_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_bayes_all_0_1 <- mod_b_ml_sent_bayes_all0_1$resample$Accuracy
+mod_b_ml_sent_bayes_all0_1_acc <- mod_b_ml_sent_bayes_all0_1$results[best_b_sent_bayes_all0_1[,4] == "*", 4]
+mod_b_ml_sent_bayes_all0_1_sd <- mod_b_ml_sent_bayes_all0_1$results[best_b_sent_bayes_all0_1[,4] == "*", 6]
+mod_b_ml_sent_bayes_all0_1_int_a <- mod_b_ml_sent_bayes_all0_1_acc - (1.645 * mod_b_ml_sent_bayes_all0_1_sd)
+mod_b_ml_sent_bayes_all0_1_int_b <- mod_b_ml_sent_bayes_all0_1_acc + (1.645 * mod_b_ml_sent_bayes_all0_1_sd)
+mod_b_ml_sent_bayes_all0_1_better <- ifelse(mod_b_ml_sent_bayes_all0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_sent_boost_all0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_sent_boost_all0_1 <- print.train(mod_b_ml_sent_boost_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_boost_all_0_1 <- mod_b_ml_sent_boost_all0_1$resample$Accuracy
+mod_b_ml_sent_boost_all0_1_acc <- mod_b_ml_sent_boost_all0_1$results[best_b_sent_boost_all0_1[,5] == "*", 5]
+mod_b_ml_sent_boost_all0_1_sd <- mod_b_ml_sent_boost_all0_1$results[best_b_sent_boost_all0_1[,5] == "*", 7]
+mod_b_ml_sent_boost_all0_1_int_a <- mod_b_ml_sent_boost_all0_1_acc - (1.645 * mod_b_ml_sent_boost_all0_1_sd)
+mod_b_ml_sent_boost_all0_1_int_b <- mod_b_ml_sent_boost_all0_1_acc + (1.645 * mod_b_ml_sent_boost_all0_1_sd)
+mod_b_ml_sent_boost_all0_1_better <- ifelse(mod_b_ml_sent_boost_all0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_sent_svml_all0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_sent_svml_all0_1 <- print.train(mod_b_ml_sent_svml_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svml_all_0_1 <- mod_b_ml_sent_svml_all0_1$resample$Accuracy
+mod_b_ml_sent_svml_all0_1_acc <- mod_b_ml_sent_svml_all0_1$results$Accuracy
+mod_b_ml_sent_svml_all0_1_sd <- mod_b_ml_sent_svml_all0_1$results$AccuracySD
+mod_b_ml_sent_svml_all0_1_int_a <- mod_b_ml_sent_svml_all0_1_acc - (1.645 * mod_b_ml_sent_svml_all0_1_sd)
+mod_b_ml_sent_svml_all0_1_int_b <- mod_b_ml_sent_svml_all0_1_acc + (1.645 * mod_b_ml_sent_svml_all0_1_sd)
+mod_b_ml_sent_svml_all0_1_better <- ifelse(mod_b_ml_sent_svml_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmp_all0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "svmPoly", 
+                                 tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_sent_svmp_all0_1 <- print.train(mod_b_ml_sent_svmp_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmp_all_0_1 <- mod_b_ml_sent_svmp_all0_1$resample$Accuracy
+mod_b_ml_sent_svmp_all0_1_acc <- mod_b_ml_sent_svmp_all0_1$results[best_b_sent_svmp_all0_1[,6] == "*", 4]
+mod_b_ml_sent_svmp_all0_1_sd <- mod_b_ml_sent_svmp_all0_1$results[best_b_sent_svmp_all0_1[,6] == "*", 6]
+mod_b_ml_sent_svmp_all0_1_int_a <- mod_b_ml_sent_svmp_all0_1_acc - (1.645 * mod_b_ml_sent_svmp_all0_1_sd)
+mod_b_ml_sent_svmp_all0_1_int_b <- mod_b_ml_sent_svmp_all0_1_acc + (1.645 * mod_b_ml_sent_svmp_all0_1_sd)
+mod_b_ml_sent_svmp_all0_1_better <- ifelse(mod_b_ml_sent_svmp_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmr_all0_1 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(4:5, 12:13)],  method = "svmRadial", 
+                                 tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_sent_svmr_all0_1 <- print.train(mod_b_ml_sent_svmr_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmr_all_0_1 <- mod_b_ml_sent_svmr_all0_1$resample$Accuracy
+mod_b_ml_sent_svmr_all0_1_acc <- mod_b_ml_sent_svmr_all0_1$results[best_b_sent_svmr_all0_1[,4] == "*", 3]
+mod_b_ml_sent_svmr_all0_1_sd <- mod_b_ml_sent_svmr_all0_1$results[best_b_sent_svmr_all0_1[,4] == "*", 5]
+mod_b_ml_sent_svmr_all0_1_int_a <- mod_b_ml_sent_svmr_all0_1_acc - (1.645 * mod_b_ml_sent_svmr_all0_1_sd)
+mod_b_ml_sent_svmr_all0_1_int_b <- mod_b_ml_sent_svmr_all0_1_acc + (1.645 * mod_b_ml_sent_svmr_all0_1_sd)
+mod_b_ml_sent_svmr_all0_1_better <- ifelse(mod_b_ml_sent_svmr_all0_1_int_a > 0.5, '+', '-')
+
+Comp_all0_1 <- resamples(list(bayes = mod_b_ml_sent_bayes_all0_1,
+                              logit = mod_b_ml_sent_glm_all0_1,
+                              rf = mod_b_ml_sent_rf_all0_1,
+                              boost = mod_b_ml_sent_boost_all0_1,
+                              svm_lin = mod_b_ml_sent_svml_all0_1, 
+                              svm_poly = mod_b_ml_sent_svmp_all0_1, 
+                              svm_rad = mod_b_ml_sent_svmr_all0_1))
+
+bwplot(Comp_all0_1, metric="Accuracy")
+
+
+#Новости и финансы, лаг 1-5
+set.seed(1234) #логит
+mod_b_ml_sent_glm_all1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "glmnet", trControl = Control)
+best_b_sent_glm_all1_5 <- print.train(mod_b_ml_sent_glm_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_glm_all_1_5 <- mod_b_ml_sent_glm_all1_5$resample$Accuracy
+mod_b_ml_sent_glm_all1_5_acc <- mod_b_ml_sent_glm_all1_5$results[best_b_sent_glm_all1_5[,5] == "*", 3]
+mod_b_ml_sent_glm_all1_5_sd <- mod_b_ml_sent_glm_all1_5$results[best_b_sent_glm_all1_5[,5] == "*", 5]
+mod_b_ml_sent_glm_all1_5_int_a <- mod_b_ml_sent_glm_all1_5_acc - (1.645 * mod_b_ml_sent_glm_all1_5_sd)
+mod_b_ml_sent_glm_all1_5_int_b <- mod_b_ml_sent_glm_all1_5_acc + (1.645 * mod_b_ml_sent_glm_all1_5_sd)
+mod_b_ml_sent_glm_all1_5_better <- ifelse(mod_b_ml_sent_glm_all1_5_int_a > 0.5, '+', '-')
+
+
+
+set.seed(1234)
+#rf
+mod_b_ml_sent_rf_all1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "rf", trControl = Control)
+best_b_sent_rf_all1_5 <-print.train(mod_b_ml_sent_rf_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_rf_all_1_5 <- mod_b_ml_sent_rf_all1_5$resample$Accuracy
+mod_b_ml_sent_rf_all1_5_acc <- mod_b_ml_sent_rf_all1_5$results[best_b_sent_rf_all1_5[,4] == "*", 2]
+mod_b_ml_sent_rf_all1_5_sd <- mod_b_ml_sent_rf_all1_5$results[best_b_sent_rf_all1_5[,4] == "*", 4]
+mod_b_ml_sent_rf_all1_5_int_a <- mod_b_ml_sent_rf_all1_5_acc - (1.645 * mod_b_ml_sent_rf_all1_5_sd)
+mod_b_ml_sent_rf_all1_5_int_b <- mod_b_ml_sent_rf_all1_5_acc + (1.645 * mod_b_ml_sent_rf_all1_5_sd)
+mod_b_ml_sent_rf_all1_5_better <- ifelse(mod_b_ml_sent_rf_all1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_sent_bayes_all1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "naive_bayes", trControl = Control)
+best_b_sent_bayes_all1_5 <- print.train(mod_b_ml_sent_bayes_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_bayes_all_1_5 <- mod_b_ml_sent_bayes_all1_5$resample$Accuracy
+mod_b_ml_sent_bayes_all1_5_acc <- mod_b_ml_sent_bayes_all1_5$results[best_b_sent_bayes_all1_5[,4] == "*", 4]
+mod_b_ml_sent_bayes_all1_5_sd <- mod_b_ml_sent_bayes_all1_5$results[best_b_sent_bayes_all1_5[,4] == "*", 6]
+mod_b_ml_sent_bayes_all1_5_int_a <- mod_b_ml_sent_bayes_all1_5_acc - (1.645 * mod_b_ml_sent_bayes_all1_5_sd)
+mod_b_ml_sent_bayes_all1_5_int_b <- mod_b_ml_sent_bayes_all1_5_acc + (1.645 * mod_b_ml_sent_bayes_all1_5_sd)
+mod_b_ml_sent_bayes_all1_5_better <- ifelse(mod_b_ml_sent_bayes_all1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_sent_boost_all1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_sent_boost_all1_5 <- print.train(mod_b_ml_sent_boost_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_boost_all_1_5 <- mod_b_ml_sent_boost_all1_5$resample$Accuracy
+mod_b_ml_sent_boost_all1_5_acc <- mod_b_ml_sent_boost_all1_5$results[best_b_sent_boost_all1_5[,5] == "*", 5]
+mod_b_ml_sent_boost_all1_5_sd <- mod_b_ml_sent_boost_all1_5$results[best_b_sent_boost_all1_5[,5] == "*", 7]
+mod_b_ml_sent_boost_all1_5_int_a <- mod_b_ml_sent_boost_all1_5_acc - (1.645 * mod_b_ml_sent_boost_all1_5_sd)
+mod_b_ml_sent_boost_all1_5_int_b <- mod_b_ml_sent_boost_all1_5_acc + (1.645 * mod_b_ml_sent_boost_all1_5_sd)
+mod_b_ml_sent_boost_all1_5_better <- ifelse(mod_b_ml_sent_boost_all1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_sent_svml_all1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_sent_svml_all1_5 <- print.train(mod_b_ml_sent_svml_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svml_all_1_5 <- mod_b_ml_sent_svml_all1_5$resample$Accuracy
+mod_b_ml_sent_svml_all1_5_acc <- mod_b_ml_sent_svml_all1_5$results$Accuracy
+mod_b_ml_sent_svml_all1_5_sd <- mod_b_ml_sent_svml_all1_5$results$AccuracySD
+mod_b_ml_sent_svml_all1_5_int_a <- mod_b_ml_sent_svml_all1_5_acc - (1.645 * mod_b_ml_sent_svml_all1_5_sd)
+mod_b_ml_sent_svml_all1_5_int_b <- mod_b_ml_sent_svml_all1_5_acc + (1.645 * mod_b_ml_sent_svml_all1_5_sd)
+mod_b_ml_sent_svml_all1_5_better <- ifelse(mod_b_ml_sent_svml_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmp_all1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "svmPoly", 
+                                 tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_sent_svmp_all1_5 <- print.train(mod_b_ml_sent_svmp_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmp_all_1_5 <- mod_b_ml_sent_svmp_all1_5$resample$Accuracy
+mod_b_ml_sent_svmp_all1_5_acc <- mod_b_ml_sent_svmp_all1_5$results[best_b_sent_svmp_all1_5[,6] == "*", 4]
+mod_b_ml_sent_svmp_all1_5_sd <- mod_b_ml_sent_svmp_all1_5$results[best_b_sent_svmp_all1_5[,6] == "*", 6]
+mod_b_ml_sent_svmp_all1_5_int_a <- mod_b_ml_sent_svmp_all1_5_acc - (1.645 * mod_b_ml_sent_svmp_all1_5_sd)
+mod_b_ml_sent_svmp_all1_5_int_b <- mod_b_ml_sent_svmp_all1_5_acc + (1.645 * mod_b_ml_sent_svmp_all1_5_sd)
+mod_b_ml_sent_svmp_all1_5_better <- ifelse(mod_b_ml_sent_svmp_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_sent_svmr_all1_5 <- train(y = bmw_sent_ok$big, x = bmw_sent_ok[,c(5:9, 12:13)],  method = "svmRadial", 
+                                 tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_sent_svmr_all1_5 <- print.train(mod_b_ml_sent_svmr_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+bmw_b_svmr_all_1_5 <- mod_b_ml_sent_svmr_all1_5$resample$Accuracy
+mod_b_ml_sent_svmr_all1_5_acc <- mod_b_ml_sent_svmr_all1_5$results[best_b_sent_svmr_all1_5[,4] == "*", 3]
+mod_b_ml_sent_svmr_all1_5_sd <- mod_b_ml_sent_svmr_all1_5$results[best_b_sent_svmr_all1_5[,4] == "*", 5]
+mod_b_ml_sent_svmr_all1_5_int_a <- mod_b_ml_sent_svmr_all1_5_acc - (1.645 * mod_b_ml_sent_svmr_all1_5_sd)
+mod_b_ml_sent_svmr_all1_5_int_b <- mod_b_ml_sent_svmr_all1_5_acc + (1.645 * mod_b_ml_sent_svmr_all1_5_sd)
+mod_b_ml_sent_svmr_all1_5_better <- ifelse(mod_b_ml_sent_svmr_all1_5_int_a > 0.5, '+', '-')
+
+Comp_all1_5 <- resamples(list(bayes = mod_b_ml_sent_bayes_all1_5,
+                              logit = mod_b_ml_sent_glm_all1_5,
+                              rf = mod_b_ml_sent_rf_all1_5,
+                              boost = mod_b_ml_sent_boost_all1_5,
+                              svm_lin = mod_b_ml_sent_svml_all1_5, 
+                              svm_poly = mod_b_ml_sent_svmp_all1_5, 
+                              svm_rad = mod_b_ml_sent_svmr_all1_5))
+
+bwplot(Comp_all1_5, metric="Accuracy")
+
+#Таблица для этого всего 
+ml_accuracy_b <- c(mod_b_ml_sent_glm_fin_acc, mod_b_ml_sent_rf_fin_acc, mod_b_ml_sent_bayes_fin_acc, 
+                 mod_b_ml_sent_boost_fin_acc, mod_b_ml_sent_svml_fin_acc, mod_b_ml_sent_svmp_fin_acc, mod_b_ml_sent_svmr_fin_acc, 
+                 mod_b_ml_sent_glm_n0_1_acc, mod_b_ml_sent_rf_n0_1_acc, mod_b_ml_sent_bayes_n0_1_acc, 
+                 mod_b_ml_sent_boost_n0_1_acc, mod_b_ml_sent_svml_n0_1_acc, mod_b_ml_sent_svmp_n0_1_acc, mod_b_ml_sent_svmr_n0_1_acc,
+                 mod_b_ml_sent_glm_n1_5_acc, mod_b_ml_sent_rf_n1_5_acc, mod_b_ml_sent_bayes_n1_5_acc, 
+                 mod_b_ml_sent_boost_n1_5_acc, mod_b_ml_sent_svml_n1_5_acc, mod_b_ml_sent_svmp_n1_5_acc, mod_b_ml_sent_svmr_n1_5_acc,
+                 mod_b_ml_sent_glm_all0_1_acc, mod_b_ml_sent_rf_all0_1_acc, mod_b_ml_sent_bayes_all0_1_acc, 
+                 mod_b_ml_sent_boost_all0_1_acc, mod_b_ml_sent_svml_all0_1_acc, mod_b_ml_sent_svmp_all0_1_acc, mod_b_ml_sent_svmr_all0_1_acc, 
+                 mod_b_ml_sent_glm_all1_5_acc, mod_b_ml_sent_rf_all1_5_acc, mod_b_ml_sent_bayes_all1_5_acc, 
+                 mod_b_ml_sent_boost_all1_5_acc, mod_b_ml_sent_svml_all1_5_acc, mod_b_ml_sent_svmp_all1_5_acc, mod_b_ml_sent_svmr_all1_5_acc)
+
+ml_sd_a_b <- c(mod_b_ml_sent_glm_fin_int_a, mod_b_ml_sent_rf_fin_int_a, mod_b_ml_sent_bayes_fin_int_a, 
+             mod_b_ml_sent_boost_fin_int_a, mod_b_ml_sent_svml_fin_int_a, mod_b_ml_sent_svmp_fin_int_a, mod_b_ml_sent_svmr_fin_int_a, 
+             mod_b_ml_sent_glm_n0_1_int_a, mod_b_ml_sent_rf_n0_1_int_a, mod_b_ml_sent_bayes_n0_1_int_a, 
+             mod_b_ml_sent_boost_n0_1_int_a, mod_b_ml_sent_svml_n0_1_int_a, mod_b_ml_sent_svmp_n0_1_int_a, mod_b_ml_sent_svmr_n0_1_int_a,
+             mod_b_ml_sent_glm_n1_5_int_a, mod_b_ml_sent_rf_n1_5_int_a, mod_b_ml_sent_bayes_n1_5_int_a, 
+             mod_b_ml_sent_boost_n1_5_int_a, mod_b_ml_sent_svml_n1_5_int_a, mod_b_ml_sent_svmp_n1_5_int_a, mod_b_ml_sent_svmr_n1_5_int_a,
+             mod_b_ml_sent_glm_all0_1_int_a, mod_b_ml_sent_rf_all0_1_int_a, mod_b_ml_sent_bayes_all0_1_int_a, 
+             mod_b_ml_sent_boost_all0_1_int_a, mod_b_ml_sent_svml_all0_1_int_a, mod_b_ml_sent_svmp_all0_1_int_a, mod_b_ml_sent_svmr_all0_1_int_a, 
+             mod_b_ml_sent_glm_all1_5_int_a, mod_b_ml_sent_rf_all1_5_int_a, mod_b_ml_sent_bayes_all1_5_int_a, 
+             mod_b_ml_sent_boost_all1_5_int_a, mod_b_ml_sent_svml_all1_5_int_a, mod_b_ml_sent_svmp_all1_5_int_a, mod_b_ml_sent_svmr_all1_5_int_a)
+
+ml_sd_b_b <- c(mod_b_ml_sent_glm_fin_int_b, mod_b_ml_sent_rf_fin_int_b, mod_b_ml_sent_bayes_fin_int_b, 
+             mod_b_ml_sent_boost_fin_int_b, mod_b_ml_sent_svml_fin_int_b, mod_b_ml_sent_svmp_fin_int_b, mod_b_ml_sent_svmr_fin_int_b, 
+             mod_b_ml_sent_glm_n0_1_int_b, mod_b_ml_sent_rf_n0_1_int_b, mod_b_ml_sent_bayes_n0_1_int_b, 
+             mod_b_ml_sent_boost_n0_1_int_b, mod_b_ml_sent_svml_n0_1_int_b, mod_b_ml_sent_svmp_n0_1_int_b, mod_b_ml_sent_svmr_n0_1_int_b,
+             mod_b_ml_sent_glm_n1_5_int_b, mod_b_ml_sent_rf_n1_5_int_b, mod_b_ml_sent_bayes_n1_5_int_b, 
+             mod_b_ml_sent_boost_n1_5_int_b, mod_b_ml_sent_svml_n1_5_int_b, mod_b_ml_sent_svmp_n1_5_int_b, mod_b_ml_sent_svmr_n1_5_int_b,
+             mod_b_ml_sent_glm_all0_1_int_b, mod_b_ml_sent_rf_all0_1_int_b, mod_b_ml_sent_bayes_all0_1_int_b, 
+             mod_b_ml_sent_boost_all0_1_int_b, mod_b_ml_sent_svml_all0_1_int_b, mod_b_ml_sent_svmp_all0_1_int_b, mod_b_ml_sent_svmr_all0_1_int_b, 
+             mod_b_ml_sent_glm_all1_5_int_b, mod_b_ml_sent_rf_all1_5_int_b, mod_b_ml_sent_bayes_all1_5_int_b, 
+             mod_b_ml_sent_boost_all1_5_int_b, mod_b_ml_sent_svml_all1_5_int_b, mod_b_ml_sent_svmp_all1_5_int_b, mod_b_ml_sent_svmr_all1_5_int_b)
+
+ml_better_b <- c(mod_b_ml_sent_glm_fin_better, mod_b_ml_sent_rf_fin_better, mod_b_ml_sent_bayes_fin_better, 
+               mod_b_ml_sent_boost_fin_better, mod_b_ml_sent_svml_fin_better, mod_b_ml_sent_svmp_fin_better, mod_b_ml_sent_svmr_fin_better, 
+               mod_b_ml_sent_glm_n0_1_better, mod_b_ml_sent_rf_n0_1_better, mod_b_ml_sent_bayes_n0_1_better, 
+               mod_b_ml_sent_boost_n0_1_better, mod_b_ml_sent_svml_n0_1_better, mod_b_ml_sent_svmp_n0_1_better, mod_b_ml_sent_svmr_n0_1_better,
+               mod_b_ml_sent_glm_n1_5_better, mod_b_ml_sent_rf_n1_5_better, mod_b_ml_sent_bayes_n1_5_better, 
+               mod_b_ml_sent_boost_n1_5_better, mod_b_ml_sent_svml_n1_5_better, mod_b_ml_sent_svmp_n1_5_better, mod_b_ml_sent_svmr_n1_5_better,
+               mod_b_ml_sent_glm_all0_1_better, mod_b_ml_sent_rf_all0_1_better, mod_b_ml_sent_bayes_all0_1_better, 
+               mod_b_ml_sent_boost_all0_1_better, mod_b_ml_sent_svml_all0_1_better, mod_b_ml_sent_svmp_all0_1_better, mod_b_ml_sent_svmr_all0_1_better, 
+               mod_b_ml_sent_glm_all1_5_better, mod_b_ml_sent_rf_all1_5_better, mod_b_ml_sent_bayes_all1_5_better, 
+               mod_b_ml_sent_boost_all1_5_better, mod_b_ml_sent_svml_all1_5_better, mod_b_ml_sent_svmp_all1_5_better, mod_b_ml_sent_svmr_all1_5_better)
+ml_type <- c('Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial', 
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial')
+
+table_ml_sent_b <- data.frame(ml_type, ml_sd_a_b, ml_sd_b_b, ml_accuracy_b, ml_better_b)
+
+rownames(table_ml_sent_b)[1] <- 'Использование только финансовой нформации'
+rownames(table_ml_sent_b)[8] <- 'Использование только новостной информации (текущая и первый лаг)'
+rownames(table_ml_sent_b)[15] <- 'Использование лагированной новостной информации'
+rownames(table_ml_sent_b)[22] <- 'Оба канала информации (текущая и первый лаг)'
+rownames(table_ml_sent_b)[29] <- 'Оба канала информации (новости ланированные)'
+
+table_ml_sent_b$ml_sd_a_b <- round(table_ml_sent_b$ml_sd_a_, 4)
+table_ml_sent_b$ml_sd_b_b <- round(table_ml_sent_b$ml_sd_b_b, 4)
+table_ml_sent_b$ml_accuracy_b <- round(table_ml_sent_b$ml_accuracy_b, 4)
+
+table_ml_sent_b
+
+#Выгрузим
+table_ml_sent_done_bmw_big <- table_ml_sent_b %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование методов машинного обучения для классификации больших доходностей на разных источниках данных")
+  ) 
+gtsave(table_ml_sent_done_bmw_big, filename = 'table_ml_sent_done_bmw_big.html')
