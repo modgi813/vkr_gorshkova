@@ -1,0 +1,369 @@
+#Собираем новости по bmw
+# файлы типа osn_канал_ok
+##### Скучная часть про все каналы #####
+## Альфа ##
+#Ищем по слову - название компании
+sum(osn_alfa_ok$stem == 'rolls')
+alfa_bmw_num <- osn_alfa_ok %>% filter(stem == 'rolls' | stem == 'bmw'  )
+alfa_bmw_num_search <- unique(alfa_bmw_num$id)
+
+
+#фильтр основного датасета
+bmw_alfa <- alfa %>%
+  filter(id %in% alfa_bmw_num_search)
+bmw_alfa$ist <- "alfa"
+
+## Авто ру ##
+sum(osn_auto_ok$stem == 'rolls')
+auto_bmw_num <- osn_auto_ok %>% filter(stem == 'rolls' | stem == 'bmw' )
+auto_bmw_num_search <- unique(auto_bmw_num$id)
+
+#фильтр основного датасета
+bmw_auto<- auto %>%
+  filter(id %in% auto_bmw_num_search)
+bmw_auto$ist <- "auto"
+
+## Биткоган ##
+sum(osn_bitkog_ok$stem == 'rolls')
+bitkog_bmw_num <- osn_bitkog_ok %>% filter(stem == ' rolls' | stem == 'bmw' )
+bitkog_bmw_num_search <- unique(bitkog_bmw_num$id)
+
+#фильтр основного датасета
+bmw_bitkog<- bitkog %>%
+  filter(id %in% bitkog_bmw_num_search)
+bmw_bitkog$ist <- "bitkog"
+
+## сигналы РЦБ ##
+sum(osn_cbr_ok$stem == 'nsany')
+cbr_bmw_num <- osn_cbr_ok %>% filter(stem == ' rolls' | stem == 'bmw' )
+cbr_bmw_num_search <- unique(cbr_bmw_num$id)
+
+#фильтр основного датасета
+bmw_cbr<- cbr %>%
+  filter(id %in% cbr_bmw_num_search)
+bmw_cbr$ist <- "cbr"
+
+## Что-то экон ##
+sum(osn_econ_ok$stem == 'nsany')
+econ_bmw_num <- osn_econ_ok %>% filter(stem == ' rolls' | stem == 'bmw' )
+econ_bmw_num_search <- unique(econ_bmw_num$id)
+
+#фильтр основного датасета
+bmw_econ <- econ %>%
+  filter(id %in% econ_bmw_num_search)
+bmw_econ$ist <- "econ"
+
+## финам алерт ##
+sum(osn_finam_ok$stem == 'nsany')
+finam_bmw_num <- osn_finam_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+finam_bmw_num_search <- unique(finam_bmw_num$id)
+
+#фильтр основного датасета
+bmw_finam <- finam %>%
+  filter(id %in% finam_bmw_num_search)
+bmw_finam$ist <- "finam"
+
+## Форбс ##
+sum(osn_forbes_ok$stem == 'nsany')
+forbes_bmw_num <- osn_forbes_ok %>% filter(stem == ' rolls' | stem == 'bmw' )
+forbes_bmw_num_search <- unique(forbes_bmw_num$id)
+
+#фильтр основного датасета
+bmw_forbes <- forbes %>%
+  filter(id %in% forbes_bmw_num_search)
+bmw_forbes$ist <- "finam"
+
+## АйФин ##
+sum(osn_ifin_ok$stem == 'motor')
+ifin_bmw_num <- osn_ifin_ok %>% filter(stem == ' rolls' | stem == 'bmw')
+ifin_bmw_num_search <- unique(ifin_bmw_num$id)
+
+#фильтр основного датасета
+bmw_ifin <- ifin %>%
+  filter(id %in% ifin_bmw_num_search)
+bmw_ifin$ist <- "ifin"
+
+## Кролик с Неглинной ##
+sum(osn_krolik_ok$stem == 'bmw')
+krolik_bmw_num <- osn_krolik_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+krolik_bmw_num_search <- unique(krolik_bmw_num$id)
+
+#фильтр основного датасета
+bmw_krolik <- krolik %>%
+  filter(id %in% krolik_bmw_num_search)
+bmw_krolik$ist <- "krolik"
+
+## Макро что-то ##
+sum(osn_macro_ok$stem == 'bmw')
+macro_bmw_num <- osn_macro_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+macro_bmw_num_search <- unique(macro_bmw_num$id)
+
+#фильтр основного датасета
+bmw_macro <- macro %>%
+  filter(id %in% macro_bmw_num_search)
+bmw_macro$ist <- "macro"
+
+## МоиИнвестиции ##
+sum(osn_minv_ok$stem == 'bmw')
+minv_bmw_num <- osn_minv_ok %>% filter(stem == ' rolls' | stem == 'bmw')
+minv_bmw_num_search <- unique(minv_bmw_num$id)
+
+#фильтр основного датасета
+bmw_minv <- minv %>%
+  filter(id %in% minv_bmw_num_search)
+bmw_minv$ist <- "minv"
+
+## Ольга Гогаладзе ##
+sum(osn_olga_ok$stem == 'bmw')
+olga_bmw_num <- osn_olga_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+olga_bmw_num_search <- unique(olga_bmw_num$id)
+
+#фильтр основного датасета
+bmw_olga <- olga %>%
+  filter(id %in% olga_bmw_num_search)
+bmw_olga$ist <- "olga"
+
+## ПроЭкон ##
+sum(osn_proec_ok$stem == 'bmw')
+proec_bmw_num <- osn_proec_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+proec_bmw_num_search <- unique(proec_bmw_num$id)
+
+#фильтр основного датасета
+bmw_proec <- proec %>%
+  filter(id %in% proec_bmw_num_search)
+bmw_proec$ist <- "proec"
+
+## СберИнв ##
+sum(osn_sber_ok$stem == 'bmw')
+sber_bmw_num <- osn_sber_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+sber_bmw_num_search <- unique(sber_bmw_num$id)
+
+#фильтр основного датасета
+bmw_sber <- sber %>%
+  filter(id %in% sber_bmw_num_search)
+bmw_sber$ist <- "sber"
+
+## Сам себе инвестор ##
+sum(osn_self_ok$stem == 'bmw')
+self_bmw_num <- osn_self_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+self_bmw_num_search <- unique(self_bmw_num$id)
+
+#фильтр основного датасета
+bmw_self <- self %>%
+  filter(id %in% self_bmw_num_search)
+bmw_self$ist <- "self"
+
+## ТинькоффИнвестиции ##
+sum(osn_tink_ok$stem == 'bmw')
+tink_bmw_num <- osn_tink_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+tink_bmw_num_search <- unique(tink_bmw_num$id)
+
+#фильтр основного датасета
+bmw_tink <- tink %>%
+  filter(id %in% tink_bmw_num_search)
+bmw_tink$ist <- "tink"
+
+## МаркетТвитс ##
+sum(osn_twit_ok$stem == 'bmw')
+twit_bmw_num <- osn_twit_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+twit_bmw_num_search <- unique(twit_bmw_num$id)
+
+#фильтр основного датасета
+bmw_twit <- twit %>%
+  filter(id %in% twit_bmw_num_search)
+bmw_twit$ist <- "twit"
+
+## За рулем ##
+sum(osn_za_rul_ok$stem == 'bmw')
+za_rul_bmw_num <- osn_za_rul_ok %>% filter(stem == ' rolls' | stem == 'bmw'  )
+za_rul_bmw_num_search <- unique(za_rul_bmw_num$id)
+
+#фильтр основного датасета
+bmw_za_rul <- za_rul %>%
+  filter(id %in% za_rul_bmw_num_search)
+bmw_za_rul$ist <- "za_rul"
+
+## Мысли-не-мысли ##
+sum(osn_misli$stem == 'bmw')
+misli_bmw_num <- osn_misli %>% filter(stem == ' rolls' | stem == 'bmw'  )
+misli_bmw_num_search <- unique(misli_bmw_num$id)
+
+#фильтр основного датасета
+bmw_misli <- misli %>%
+  filter(id %in% misli_bmw_num_search)
+bmw_misli$date_1 <- substr(bmw_misli$date, 1, 10)
+bmw_misli$ist <- "misli"
+
+## Банкролло ##
+sum(osn_bank$stem == 'bmw')
+bank_bmw_num <- osn_bank %>% filter(stem == ' rolls' | stem == 'bmw'  )
+bank_bmw_num_search <- unique(bank_bmw_num$id)
+
+#фильтр основного датасета
+bmw_bank <- bank %>%
+  filter(id %in% bank_bmw_num_search)
+bmw_bank$date_1 <- substr(bmw_bank$date, 1, 10)
+bmw_bank$ist <- "bank"
+
+## Банкста ##
+sum(osn_sta$stem == 'bmw')
+sta_bmw_num <- osn_sta %>% filter(stem == ' rolls' | stem == 'bmw'   )
+sta_bmw_num_search <- unique(sta_bmw_num$id)
+
+#фильтр основного датасета
+bmw_sta <- sta %>%
+  filter(id %in% sta_bmw_num_search)
+bmw_sta$date_1 <- substr(bmw_sta$date, 1, 10)
+bmw_sta$ist <- "sta"
+
+## РИА ##
+sum(osn_ria$stem == 'bmw')
+ria_bmw_num <- osn_ria %>% filter(stem == ' rolls' | stem == 'bmw'   )
+ria_bmw_num_search <- unique(ria_bmw_num$id)
+
+#фильтр основного датасета
+bmw_ria <- ria %>%
+  filter(id %in% ria_bmw_num_search)
+bmw_ria$date_1 <- substr(bmw_ria$date, 1, 10)
+bmw_ria$ist <- "ria"
+
+## РБК ##
+sum(osn_rbc$stem == 'bmw')
+rbc_bmw_num <- osn_rbc %>% filter(stem == ' rolls' | stem == 'bmw'   )
+rbc_bmw_num_search <- unique(rbc_bmw_num$id)
+
+#фильтр основного датасета
+bmw_rbc <- rbc %>%
+  filter(id %in% rbc_bmw_num_search)
+bmw_rbc$date_1 <- substr(bmw_rbc$date, 1, 10)
+bmw_rbc$ist <- "rbc"
+
+## Медуза ##
+sum(osn_meduza$stem == 'bmw')
+meduza_bmw_num <- osn_meduza %>% filter(stem == ' rolls' | stem == 'bmw'   )
+meduza_bmw_num_search <- unique(meduza_bmw_num$id)
+
+#фильтр основного датасета
+bmw_meduza <- meduza %>%
+  filter(id %in% meduza_bmw_num_search)
+bmw_meduza$date_1 <- substr(bmw_meduza$date, 1, 10)
+bmw_meduza$ist <- "meduza"
+
+## Лентач ##
+sum(osn_lent$stem == 'bmw')
+lent_bmw_num <- osn_lent %>% filter(stem == ' rolls' | stem == 'bmw'  )
+lent_bmw_num_search <- unique(lent_bmw_num$id)
+
+#фильтр основного датасета
+bmw_lent <- lent %>%
+  filter(id %in% lent_bmw_num_search)
+bmw_lent$date_1 <- substr(bmw_lent$date, 1, 10)
+bmw_lent$ist <- "lent"
+
+## Делл ##
+sum(osn_spy$stem == 'bmw')
+spy_bmw_num <- osn_spy %>% filter(stem == ' rolls' | stem == 'bmw'  )
+spy_bmw_num_search <- unique(spy_bmw_num$id)
+
+#фильтр основного датасета
+bmw_spy <- spy %>%
+  filter(id %in% spy_bmw_num_search)
+bmw_spy$date_1 <- substr(bmw_spy$date, 1, 10)
+bmw_spy$ist <- "spy"
+
+## Собчак ##
+sum(osn_sobchak$stem == 'bmw')
+sobchak_bmw_num <- osn_sobchak %>% filter(stem == ' rolls' | stem == 'bmw' )
+sobchak_bmw_num_search <- unique(sobchak_bmw_num$id)
+
+#фильтр основного датасета
+bmw_sobchak <- sobchak %>%
+  filter(id %in% sobchak_bmw_num_search)
+bmw_sobchak$date_1 <- substr(bmw_sobchak$date, 1, 10)
+bmw_sobchak$ist <- "sobchak"
+
+#### Все в один датасет через rbind и потом упорядочить по дате ####
+bmw_news <- rbind(bmw_alfa,bmw_auto,bmw_bitkog, 
+                   bmw_cbr,bmw_econ,bmw_finam, 
+                   bmw_forbes,bmw_ifin,bmw_krolik, 
+                   bmw_macro,bmw_minv,bmw_olga, 
+                   bmw_proec,bmw_sber,bmw_self, 
+                   bmw_tink,bmw_twit,bmw_za_rul, 
+                   bmw_misli,bmw_bank,bmw_sta, 
+                   bmw_ria,bmw_rbc,bmw_meduza, 
+                   bmw_lent,bmw_spy,bmw_sobchak)
+View(bmw_news)
+
+#Сделаем нормальную дату через выбор первых 10 символов, потом эз дэйт и после упорядочим + сразу отберем нужное число по датам
+bmw_news <-bmw_news[, c(1, 3, 5, 6)]
+bmw_news$date_1 <- as.Date(bmw_news$date_1)
+colnames(bmw_news)[3] <- "Date"
+bmw_news <-bmw_news[order(bmw_news$Date), ]
+#Ограничим датасет по дате, чтобы не считать лишнее 
+bmw_news <-bmw_news %>% filter(between(Date, as.Date('2019-01-01'), as.Date('2022-12-31')))
+#и сделаем новые айди 
+bmw_news$id <- seq(from = 1, by = 1, length.out = length(bmw_news$id))
+View(bmw_news)
+
+#### Дальше выделение сентиментов ####
+#Загрузили словарь 
+dict_base <- readr::read_csv("https://raw.githubusercontent.com/text-machine-lab/sentimental/master/sentimental/word_list/russian.csv")
+View(dict_base)
+
+#Продобработаем весь текст - чистим все, что можно и нельзя
+bmw_corpus <- VCorpus(VectorSource(bmw_news$message_ok))
+
+bmw_corpus_ok <- tm_map(bmw_corpus, removeNumbers) %>% 
+  tm_map(removePunctuation) %>% 
+  tm_map(content_transformer(tolower)) %>% 
+  tm_map(removeWords, quanteda::stopwords("ru", source = "snowball")) %>% 
+  tm_map(removeWords, quanteda::stopwords("ru", source = "stopwords-iso")) %>% 
+  tm_map(removeWords, quanteda::stopwords("ru", source = "marimo")) %>% 
+  tm_map(removeWords, quanteda::stopwords("ru", source = "nltk")) 
+dictCorpus_bmw <-bmw_corpus_ok
+bmw_corpus_ok <- tm_map(bmw_corpus_ok, stemDocument)
+
+# еще что-то сделали
+bmw_CorpusTokenized <- lapply(bmw_corpus_ok, scan_tokenizer)
+# загнази чистое обратно
+bmw_Df <- data.frame(text = sapply(bmw_CorpusTokenized, paste, collapse = " "), stringsAsFactors = FALSE)
+View(bmw_Df)
+
+#Сшиваем с датами 
+bmw_for_dict <- cbind(bmw_news,bmw_Df)
+bmw_for_dict <-bmw_for_dict[,c(1, 3, 4, 5)]
+
+tidy_bmw_dict <-bmw_for_dict %>%
+  unnest_tokens(word, text)
+
+#берем основу слов - итоговая вещь для работы
+osn_tidy_bmw_dict <- tidy_bmw_dict %>%
+  mutate(stem = wordStem(word, language = 'russian'))
+
+dict_base_osn <- dict_base %>%
+  mutate(stem = wordStem(word, language = 'russian'))
+
+bmw_senti <- osn_tidy_bmw_dict %>% 
+  inner_join(dict, by = "word", multiple = 'all', relationship = "many-to-many")
+head(bmw_senti)
+
+bmw_senti_sent <-bmw_senti %>% 
+  group_by(Date) %>% 
+  summarise(sentiment = sum(score))
+head(bmw_senti_sent)
+
+#Теперь по числу плохих-хороших новостей 
+bmw_senti_for_count <-bmw_senti %>% 
+  group_by(id, Date) %>% 
+  summarise(sent = sum(score))
+
+head(bmw_senti_for_count)
+#Добавим переменные счета новостей 
+bmw_senti_for_count$posit <- ifelse(bmw_senti_for_count$sent > 0, 1, 0)
+bmw_senti_for_count$negat <- ifelse(bmw_senti_for_count$sent < 0, 1, 0)
+
+bmw_senti_count <-bmw_senti_for_count %>% 
+  group_by(Date) %>% 
+  summarise(plus = sum(posit), 
+            minus = sum(negat))
+head(bmw_senti_count)
