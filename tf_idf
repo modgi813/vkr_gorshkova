@@ -1,0 +1,1099 @@
+library(imputeTS)
+#Вначале тф-идф посчитаем и сделаем анализ 
+toyota_for_dict$id <- seq(from = 1, by = 1, length.out = length(toyota_for_dict$id))
+#токенизация
+token_toyota <- toyota_for_dict %>%
+  unnest_tokens(word, text)
+#берем основу слов - итоговая вещь для работы
+osn_toyota <- token_toyota %>%
+  mutate(stem = wordStem(word, language = 'russian'))
+osn_toyota <- na.omit(osn_toyota)
+
+#tf-idf для каждой новости 
+toyota_count <- osn_toyota %>%
+  count(id, stem, sort = TRUE) 
+head(toyota_count)
+
+toyota_tf_idf <- toyota_count %>%
+  bind_tf_idf(stem, id, n) 
+
+toyota_tf_idf <- filter(toyota_tf_idf, toyota_tf_idf$tf != 1) %>%
+  arrange(desc(tf_idf))
+head(toyota_tf_idf)
+
+toyota_tf_idf_top <-toyota_tf_idf %>% arrange(desc(tf_idf)) %>% top_n(50, tf_idf) #Это топ-150 слов
+#теперь оставим только эти слова 
+toyota_tf_idf_top_stem <- toyota_tf_idf_top$stem
+toyota_tf_idf_ok <- osn_toyota %>% filter(stem %in% toyota_tf_idf_top_stem) #отфильтровали (оставили в стемах только эти слова)
+toyota_tf_idf_count <- toyota_tf_idf_ok %>% count(id, stem, sort = TRUE) #посчитали
+dtm_toyota_tf_idf_top <- tidytext::cast_dfm(toyota_tf_idf_count, id, stem, n) #Загнали в DTM
+dtm_toyota_tf_idf_top
+dtm_toyota_tf_idf_top <-data.frame(as.matrix(dtm_toyota_tf_idf_top)) #перевели в дата фрейм - гуд 
+dtm_toyota_tf_idf_top$id <- unique(toyota_tf_idf_count$id)
+dtm_toyota_tf_idf_top$id <- as.numeric(dtm_toyota_tf_idf_top$id)
+
+
+toyota_tf <- left_join(toyota_for_dict, dtm_toyota_tf_idf_top, by = 'id')  %>% na_replace(0)
+toyota_tf <- na.omit(toyota_tf)
+toyota_tf <- toyota_tf[,c(2, 5:51)]
+View(toyota_tf)
+
+for (i in 2:48) {
+  toyota_tf[,i] <- as.numeric(toyota_tf[,i])
+}
+
+#Получили суммы по дням топ-слов
+toyota_tf_ok <- toyota_tf %>% group_by(Date) %>%
+  summarise(across(everything(), sum)) %>%
+  as.data.frame() 
+
+#Датасеты 
+toyota_tf_ok_mod <- left_join(toyota_ok, toyota_tf_ok, by = 'Date')
+toyota_tf_ok_mod <- replace(toyota_tf_ok_mod, is.na(toyota_tf_ok_mod), 0)
+
+#Отдельный датасет для лагов 
+toyota_tf_ok_mod_1 <- toyota_tf_ok_mod[,c(4:50)]
+toyota_tf_ok_mod_1 <- toyota_tf_ok_mod_1[-(length(toyota_tf_ok_mod_1)),]
+toyota_ok_1 <- toyota_ok[-1,]
+toyota_tf_ok_mod_1 <- cbind(toyota_ok_1, toyota_tf_ok_mod_1)
+toyota_tf_ok_mod_1$fin_1 <- lag(toyota_tf_ok_mod_1$toyota_y_ok, 1)
+toyota_tf_ok_mod_1$fin_2 <- lag(toyota_tf_ok_mod_1$toyota_y_ok, 2)
+toyota_tf_ok_mod_1$toyota_diff <- as.factor(toyota_tf_ok_mod_1$toyota_diff)
+toyota_tf_ok_mod_1 <- na.omit(toyota_tf_ok_mod_1)
+
+toyota_tf_ok_mod$fin_1 <- lag(toyota_tf_ok_mod$toyota_y_ok, 1)
+toyota_tf_ok_mod$fin_2 <- lag(toyota_tf_ok_mod$toyota_y_ok, 2)
+toyota_tf_ok_mod$toyota_diff <- as.factor(toyota_tf_ok_mod$toyota_diff)
+toyota_tf_ok_mod <- na.omit(toyota_tf_ok_mod)
+
+#Итого есть toyota_tf_ok_mod и toyota_tf_ok_mod_1 - с лагами и без 
+
+
+#### Модели классификации всех доходностей ####
+# Только Финансы
+set.seed(1234) #логит
+mod_ml_tf_glm_fin <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,51:52],  method = "glmnet", trControl = Control)
+best_tf_glm_fin <- print.train(mod_ml_tf_glm_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_glm_f <- mod_ml_tf_glm_fin$resample$Accuracy
+mod_ml_tf_glm_fin_acc <- mod_ml_tf_glm_fin$results[best_tf_glm_fin[,5] == "*", 3]
+mod_ml_tf_glm_fin_sd <- mod_ml_tf_glm_fin$results[best_tf_glm_fin[,5] == "*", 5]
+mod_ml_tf_glm_fin_int_a <- mod_ml_tf_glm_fin_acc - (1.645 * mod_ml_tf_glm_fin_sd)
+mod_ml_tf_glm_fin_int_b <- mod_ml_tf_glm_fin_acc + (1.645 * mod_ml_tf_glm_fin_sd)
+mod_ml_tf_glm_fin_better <- ifelse(mod_ml_tf_glm_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_tf_rf_fin <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,51:52],  method = "rf", trControl = Control)
+best_tf_rf_fin <-print.train(mod_ml_tf_rf_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_rf_f <- mod_ml_tf_rf_fin$resample$Accuracy
+mod_ml_tf_rf_fin_acc <- mod_ml_tf_rf_fin$results$Accuracy
+mod_ml_tf_rf_fin_sd <- mod_ml_tf_rf_fin$results$AccuracySD
+mod_ml_tf_rf_fin_int_a <- mod_ml_tf_rf_fin_acc - (1.645 * mod_ml_tf_rf_fin_sd)
+mod_ml_tf_rf_fin_int_b <- mod_ml_tf_rf_fin_acc + (1.645 * mod_ml_tf_rf_fin_sd)
+mod_ml_tf_rf_fin_better <- ifelse(mod_ml_tf_rf_fin_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_tf_bayes_fin <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,51:52],  method = "naive_bayes", trControl = Control)
+best_tf_bayes_fin <- print.train(mod_ml_tf_bayes_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_bayes_f <- mod_ml_tf_bayes_fin$resample$Accuracy
+mod_ml_tf_bayes_fin_acc <- mod_ml_tf_bayes_fin$results[best_tf_bayes_fin[,4] == "*", 4]
+mod_ml_tf_bayes_fin_sd <- mod_ml_tf_bayes_fin$results[best_tf_bayes_fin[,4] == "*", 6]
+mod_ml_tf_bayes_fin_int_a <- mod_ml_tf_bayes_fin_acc - (1.645 * mod_ml_tf_bayes_fin_sd)
+mod_ml_tf_bayes_fin_int_b <- mod_ml_tf_bayes_fin_acc + (1.645 * mod_ml_tf_bayes_fin_sd)
+mod_ml_tf_bayes_fin_better <- ifelse(mod_ml_tf_bayes_fin_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_tf_boost_fin <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,51:52],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_tf_boost_fin <- print.train(mod_ml_tf_boost_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_boost_f <- mod_ml_tf_boost_fin$resample$Accuracy
+mod_ml_tf_boost_fin_acc <- mod_ml_tf_boost_fin$results[best_tf_boost_fin[,5] == "*", 5]
+mod_ml_tf_boost_fin_sd <- mod_ml_tf_boost_fin$results[best_tf_boost_fin[,5] == "*", 7]
+mod_ml_tf_boost_fin_int_a <- mod_ml_tf_boost_fin_acc - (1.645 * mod_ml_tf_boost_fin_sd)
+mod_ml_tf_boost_fin_int_b <- mod_ml_tf_boost_fin_acc + (1.645 * mod_ml_tf_boost_fin_sd)
+mod_ml_tf_boost_fin_better <- ifelse(mod_ml_tf_boost_fin_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_tf_svml_fin <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,51:52],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_tf_svml_fin <- print.train(mod_ml_tf_svml_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svml_f <- mod_ml_tf_svml_fin$resample$Accuracy
+mod_ml_tf_svml_fin_acc <- mod_ml_tf_svml_fin$results$Accuracy
+mod_ml_tf_svml_fin_sd <- mod_ml_tf_svml_fin$results$AccuracySD
+mod_ml_tf_svml_fin_int_a <- mod_ml_tf_svml_fin_acc - (1.645 * mod_ml_tf_svml_fin_sd)
+mod_ml_tf_svml_fin_int_b <- mod_ml_tf_svml_fin_acc + (1.645 * mod_ml_tf_svml_fin_sd)
+mod_ml_tf_svml_fin_better <- ifelse(mod_ml_tf_svml_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmp_fin <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,51:52],  method = "svmPoly", 
+                              tuneLength = 3, trControl = Control, verbose = FALSE)
+best_tf_svmp_fin <- print.train(mod_ml_tf_svmp_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmp_f <- mod_ml_tf_svmp_fin$resample$Accuracy
+mod_ml_tf_svmp_fin_acc <- mod_ml_tf_svmp_fin$results[best_tf_svmp_fin[,6] == "*", 4]
+mod_ml_tf_svmp_fin_sd <- mod_ml_tf_svmp_fin$results[best_tf_svmp_fin[,6] == "*", 6]
+mod_ml_tf_svmp_fin_int_a <- mod_ml_tf_svmp_fin_acc - (1.645 * mod_ml_tf_svmp_fin_sd)
+mod_ml_tf_svmp_fin_int_b <- mod_ml_tf_svmp_fin_acc + (1.645 * mod_ml_tf_svmp_fin_sd)
+mod_ml_tf_svmp_fin_better <- ifelse(mod_ml_tf_svmp_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmr_fin <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,51:52],  method = "svmRadial", 
+                              tuneLength = 5, trControl = Control, verbose = FALSE)
+best_tf_svmr_fin <- print.train(mod_ml_tf_svmr_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmr_f <- mod_ml_tf_svmr_fin$resample$Accuracy
+mod_ml_tf_svmr_fin_acc <- mod_ml_tf_svmr_fin$results[best_tf_svmr_fin[,4] == "*", 3]
+mod_ml_tf_svmr_fin_sd <- mod_ml_tf_svmr_fin$results[best_tf_svmr_fin[,4] == "*", 5]
+mod_ml_tf_svmr_fin_int_a <- mod_ml_tf_svmr_fin_acc - (1.645 * mod_ml_tf_svmr_fin_sd)
+mod_ml_tf_svmr_fin_int_b <- mod_ml_tf_svmr_fin_acc + (1.645 * mod_ml_tf_svmr_fin_sd)
+mod_ml_tf_svmr_fin_better <- ifelse(mod_ml_tf_svmr_fin_int_a > 0.5, '+', '-')
+
+Comp_fin_tf <- resamples(list(bayes = mod_ml_tf_bayes_fin,
+                           logit = mod_ml_tf_glm_fin,
+                           rf = mod_ml_tf_rf_fin,
+                           boost = mod_ml_tf_boost_fin,
+                           svm_lin = mod_ml_tf_svml_fin, 
+                           svm_poly = mod_ml_tf_svmp_fin, 
+                           svm_rad = mod_ml_tf_svmr_fin))
+
+bwplot(Comp_fin_tf, metric="Accuracy")
+
+View(toyota_tf_ok_mod)
+#Текущие ТФ-ИДФ 
+set.seed(1234) #логит
+mod_ml_tf_glm_n0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,4:50],  method = "glmnet", trControl = Control)
+best_tf_glm_n0_1 <- print.train(mod_ml_tf_glm_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_glm_n_0_1 <- mod_ml_tf_glm_n0_1$resample$Accuracy
+mod_ml_tf_glm_n0_1_acc <- mod_ml_tf_glm_n0_1$results[best_tf_glm_n0_1[,5] == "*", 3]
+mod_ml_tf_glm_n0_1_sd <- mod_ml_tf_glm_n0_1$results[best_tf_glm_n0_1[,5] == "*", 5]
+mod_ml_tf_glm_n0_1_int_a <- mod_ml_tf_glm_n0_1_acc - (1.645 * mod_ml_tf_glm_n0_1_sd)
+mod_ml_tf_glm_n0_1_int_b <- mod_ml_tf_glm_n0_1_acc + (1.645 * mod_ml_tf_glm_n0_1_sd)
+mod_ml_tf_glm_n0_1_better <- ifelse(mod_ml_tf_glm_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234) #rf
+mod_ml_tf_rf_n0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,4:50],  method = "rf", trControl = Control)
+best_tf_rf_n0_1 <-print.train(mod_ml_tf_rf_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_rf_n_0_1 <- mod_ml_tf_rf_n0_1$resample$Accuracy
+mod_ml_tf_rf_n0_1_acc <- mod_ml_tf_rf_n0_1$results[best_tf_rf_n0_1[,4] == "*", 2]
+mod_ml_tf_rf_n0_1_sd <- mod_ml_tf_rf_n0_1$results[best_tf_rf_n0_1[,4] == "*", 4]
+mod_ml_tf_rf_n0_1_int_a <- mod_ml_tf_rf_n0_1_acc - (1.645 * mod_ml_tf_rf_n0_1_sd)
+mod_ml_tf_rf_n0_1_int_b <- mod_ml_tf_rf_n0_1_acc + (1.645 * mod_ml_tf_rf_n0_1_sd)
+mod_ml_tf_rf_n0_1_better <- ifelse(mod_ml_tf_rf_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234) #bayes
+mod_ml_tf_bayes_n0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,4:50],  method = "naive_bayes", trControl = Control)
+best_tf_bayes_n0_1 <- print.train(mod_ml_tf_bayes_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_bayes_n_0_1 <- mod_ml_tf_bayes_n0_1$resample$Accuracy
+mod_ml_tf_bayes_n0_1_acc <- mod_ml_tf_bayes_n0_1$results[best_tf_bayes_n0_1[,4] == "*", 4]
+mod_ml_tf_bayes_n0_1_sd <- mod_ml_tf_bayes_n0_1$results[best_tf_bayes_n0_1[,4] == "*", 6]
+
+mod_ml_tf_bayes_n0_1_int_a <- mod_ml_tf_bayes_n0_1_acc - (1.645 * mod_ml_tf_bayes_n0_1_sd)
+mod_ml_tf_bayes_n0_1_int_b <- mod_ml_tf_bayes_n0_1_acc + (1.645 * mod_ml_tf_bayes_n0_1_sd)
+mod_ml_tf_bayes_n0_1_better <- ifelse(mod_ml_tf_bayes_n0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_tf_boost_n0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,4:50],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_tf_boost_n0_1 <- print.train(mod_ml_tf_boost_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_boost_n_0_1 <- mod_ml_tf_boost_n0_1$resample$Accuracy
+mod_ml_tf_boost_n0_1_acc <- mod_ml_tf_boost_n0_1$results[best_tf_boost_n0_1[,5] == "*", 5]
+mod_ml_tf_boost_n0_1_sd <- mod_ml_tf_boost_n0_1$results[best_tf_boost_n0_1[,5] == "*", 7]
+mod_ml_tf_boost_n0_1_int_a <- mod_ml_tf_boost_n0_1_acc - (1.645 * mod_ml_tf_boost_n0_1_sd)
+mod_ml_tf_boost_n0_1_int_b <- mod_ml_tf_boost_n0_1_acc + (1.645 * mod_ml_tf_boost_n0_1_sd)
+mod_ml_tf_boost_n0_1_better <- ifelse(mod_ml_tf_boost_n0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_tf_svml_n0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,4:50],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_tf_svml_n0_1 <- print.train(mod_ml_tf_svml_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svml_n_0_1 <- mod_ml_tf_svml_n0_1$resample$Accuracy
+mod_ml_tf_svml_n0_1_acc <- mod_ml_tf_svml_n0_1$results$Accuracy
+mod_ml_tf_svml_n0_1_sd <- mod_ml_tf_svml_n0_1$results$AccuracySD
+mod_ml_tf_svml_n0_1_int_a <- mod_ml_tf_svml_n0_1_acc - (1.645 * mod_ml_tf_svml_n0_1_sd)
+mod_ml_tf_svml_n0_1_int_b <- mod_ml_tf_svml_n0_1_acc + (1.645 * mod_ml_tf_svml_n0_1_sd)
+mod_ml_tf_svml_n0_1_better <- ifelse(mod_ml_tf_svml_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmp_n0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,4:50],  method = "svmPoly", 
+                              tuneLength = 3, trControl = Control, verbose = FALSE)
+best_tf_svmp_n0_1 <- print.train(mod_ml_tf_svmp_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmp_n_0_1 <- mod_ml_tf_svmp_n0_1$resample$Accuracy
+mod_ml_tf_svmp_n0_1_acc <- mod_ml_tf_svmp_n0_1$results[best_tf_svmp_n0_1[,6] == "*", 4]
+mod_ml_tf_svmp_n0_1_sd <- mod_ml_tf_svmp_n0_1$results[best_tf_svmp_n0_1[,6] == "*", 6]
+mod_ml_tf_svmp_n0_1_int_a <- mod_ml_tf_svmp_n0_1_acc - (1.645 * mod_ml_tf_svmp_n0_1_sd)
+mod_ml_tf_svmp_n0_1_int_b <- mod_ml_tf_svmp_n0_1_acc + (1.645 * mod_ml_tf_svmp_n0_1_sd)
+mod_ml_tf_svmp_n0_1_better <- ifelse(mod_ml_tf_svmp_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmr_n0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,4:50],  method = "svmRadial", 
+                              tuneLength = 5, trControl = Control, verbose = FALSE)
+best_tf_svmr_n0_1 <- print.train(mod_ml_tf_svmr_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmr_n_0_1 <- mod_ml_tf_svmr_n0_1$resample$Accuracy
+mod_ml_tf_svmr_n0_1_acc <- mod_ml_tf_svmr_n0_1$results[best_tf_svmr_n0_1[,4] == "*", 3]
+mod_ml_tf_svmr_n0_1_sd <- mod_ml_tf_svmr_n0_1$results[best_tf_svmr_n0_1[,4] == "*", 5]
+mod_ml_tf_svmr_n0_1_int_a <- mod_ml_tf_svmr_n0_1_acc - (1.645 * mod_ml_tf_svmr_n0_1_sd)
+mod_ml_tf_svmr_n0_1_int_b <- mod_ml_tf_svmr_n0_1_acc + (1.645 * mod_ml_tf_svmr_n0_1_sd)
+mod_ml_tf_svmr_n0_1_better <- ifelse(mod_ml_tf_svmr_n0_1_int_a > 0.5, '+', '-')
+
+Comp_n0_1_tf <- resamples(list(bayes = mod_ml_tf_bayes_n0_1,
+                                logit = mod_ml_tf_glm_n0_1,
+                                rf = mod_ml_tf_rf_n0_1,
+                                boost = mod_ml_tf_boost_n0_1,
+                                svm_lin = mod_ml_tf_svml_n0_1, 
+                                svm_poly = mod_ml_tf_svmp_n0_1, 
+                                svm_rad = mod_ml_tf_svmr_n0_1))
+
+bwplot(Comp_n0_1_tf, metric="Accuracy") 
+
+#Лаги ТФ-ИДФ 
+set.seed(1234) #логит
+mod_ml_tf_glm_n1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,4:50],  method = "glmnet", trControl = Control)
+best_tf_glm_n1_5 <- print.train(mod_ml_tf_glm_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_glm_n_1_5 <- mod_ml_tf_glm_n1_5$resample$Accuracy
+mod_ml_tf_glm_n1_5_acc <- mod_ml_tf_glm_n1_5$results[best_tf_glm_n1_5[,5] == "*", 3]
+mod_ml_tf_glm_n1_5_sd <- mod_ml_tf_glm_n1_5$results[best_tf_glm_n1_5[,5] == "*", 5]
+mod_ml_tf_glm_n1_5_int_a <- mod_ml_tf_glm_n1_5_acc - (1.645 * mod_ml_tf_glm_n1_5_sd)
+mod_ml_tf_glm_n1_5_int_b <- mod_ml_tf_glm_n1_5_acc + (1.645 * mod_ml_tf_glm_n1_5_sd)
+mod_ml_tf_glm_n1_5_better <- ifelse(mod_ml_tf_glm_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_tf_rf_n1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,4:50],  method = "rf", trControl = Control)
+best_tf_rf_n1_5 <-print.train(mod_ml_tf_rf_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_rf_n_1_5 <- mod_ml_tf_rf_n1_5$resample$Accuracy
+mod_ml_tf_rf_n1_5_acc <- mod_ml_tf_rf_n1_5$results[best_tf_rf_n1_5[,4] == "*", 2]
+mod_ml_tf_rf_n1_5_sd <- mod_ml_tf_rf_n1_5$results[best_tf_rf_n1_5[,4] == "*", 4]
+mod_ml_tf_rf_n1_5_int_a <- mod_ml_tf_rf_n1_5_acc - (1.645 * mod_ml_tf_rf_n1_5_sd)
+mod_ml_tf_rf_n1_5_int_b <- mod_ml_tf_rf_n1_5_acc + (1.645 * mod_ml_tf_rf_n1_5_sd)
+mod_ml_tf_rf_n1_5_better <- ifelse(mod_ml_tf_rf_n1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_tf_bayes_n1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,4:50],  method = "naive_bayes", trControl = Control)
+best_tf_bayes_n1_5 <- print.train(mod_ml_tf_bayes_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_bayes_n_1_5 <- mod_ml_tf_bayes_n1_5$resample$Accuracy
+mod_ml_tf_bayes_n1_5_acc <- mod_ml_tf_bayes_n1_5$results[best_tf_bayes_n1_5[,4] == "*", 4]
+mod_ml_tf_bayes_n1_5_sd <- mod_ml_tf_bayes_n1_5$results[best_tf_bayes_n1_5[,4] == "*", 6]
+mod_ml_tf_bayes_n1_5_int_a <- mod_ml_tf_bayes_n1_5_acc - (1.645 * mod_ml_tf_bayes_n1_5_sd)
+mod_ml_tf_bayes_n1_5_int_b <- mod_ml_tf_bayes_n1_5_acc + (1.645 * mod_ml_tf_bayes_n1_5_sd)
+mod_ml_tf_bayes_n1_5_better <- ifelse(mod_ml_tf_bayes_n1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_tf_boost_n1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,4:50],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_tf_boost_n1_5 <- print.train(mod_ml_tf_boost_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_boost_n_1_5 <- mod_ml_tf_boost_n1_5$resample$Accuracy
+mod_ml_tf_boost_n1_5_acc <- mod_ml_tf_boost_n1_5$results[best_tf_boost_n1_5[,5] == "*", 5]
+mod_ml_tf_boost_n1_5_sd <- mod_ml_tf_boost_n1_5$results[best_tf_boost_n1_5[,5] == "*", 7]
+mod_ml_tf_boost_n1_5_int_a <- mod_ml_tf_boost_n1_5_acc - (1.645 * mod_ml_tf_boost_n1_5_sd)
+mod_ml_tf_boost_n1_5_int_b <- mod_ml_tf_boost_n1_5_acc + (1.645 * mod_ml_tf_boost_n1_5_sd)
+mod_ml_tf_boost_n1_5_better <- ifelse(mod_ml_tf_boost_n1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_tf_svml_n1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,4:50],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_tf_svml_n1_5 <- print.train(mod_ml_tf_svml_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svml_n_1_5 <- mod_ml_tf_svml_n1_5$resample$Accuracy
+mod_ml_tf_svml_n1_5_acc <- mod_ml_tf_svml_n1_5$results$Accuracy
+mod_ml_tf_svml_n1_5_sd <- mod_ml_tf_svml_n1_5$results$AccuracySD
+mod_ml_tf_svml_n1_5_int_a <- mod_ml_tf_svml_n1_5_acc - (1.645 * mod_ml_tf_svml_n1_5_sd)
+mod_ml_tf_svml_n1_5_int_b <- mod_ml_tf_svml_n1_5_acc + (1.645 * mod_ml_tf_svml_n1_5_sd)
+mod_ml_tf_svml_n1_5_better <- ifelse(mod_ml_tf_svml_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmp_n1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,4:50],  method = "svmPoly", 
+                              tuneLength = 3, trControl = Control, verbose = FALSE)
+best_tf_svmp_n1_5 <- print.train(mod_ml_tf_svmp_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmp_n_1_5 <- mod_ml_tf_svmp_n1_5$resample$Accuracy
+mod_ml_tf_svmp_n1_5_acc <- mod_ml_tf_svmp_n1_5$results[best_tf_svmp_n1_5[,6] == "*", 4]
+mod_ml_tf_svmp_n1_5_sd <- mod_ml_tf_svmp_n1_5$results[best_tf_svmp_n1_5[,6] == "*", 6]
+mod_ml_tf_svmp_n1_5_int_a <- mod_ml_tf_svmp_n1_5_acc - (1.645 * mod_ml_tf_svmp_n1_5_sd)
+mod_ml_tf_svmp_n1_5_int_b <- mod_ml_tf_svmp_n1_5_acc + (1.645 * mod_ml_tf_svmp_n1_5_sd)
+mod_ml_tf_svmp_n1_5_better <- ifelse(mod_ml_tf_svmp_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmr_n1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,4:50],  method = "svmRadial", 
+                              tuneLength = 5, trControl = Control, verbose = FALSE)
+best_tf_svmr_n1_5 <- print.train(mod_ml_tf_svmr_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmr_n_1_5 <- mod_ml_tf_svmr_n1_5$resample$Accuracy
+mod_ml_tf_svmr_n1_5_acc <- mod_ml_tf_svmr_n1_5$results[best_tf_svmr_n1_5[,4] == "*", 3]
+mod_ml_tf_svmr_n1_5_sd <- mod_ml_tf_svmr_n1_5$results[best_tf_svmr_n1_5[,4] == "*", 5]
+mod_ml_tf_svmr_n1_5_int_a <- mod_ml_tf_svmr_n1_5_acc - (1.645 * mod_ml_tf_svmr_n1_5_sd)
+mod_ml_tf_svmr_n1_5_int_b <- mod_ml_tf_svmr_n1_5_acc + (1.645 * mod_ml_tf_svmr_n1_5_sd)
+mod_ml_tf_svmr_n1_5_better <- ifelse(mod_ml_tf_svmr_n1_5_int_a > 0.5, '+', '-')
+
+Comp_n1_5_tf <- resamples(list(bayes = mod_ml_tf_bayes_n1_5,
+                                logit = mod_ml_tf_glm_n1_5,
+                                rf = mod_ml_tf_rf_n1_5,
+                                boost = mod_ml_tf_boost_n1_5,
+                                svm_lin = mod_ml_tf_svml_n1_5, 
+                                svm_poly = mod_ml_tf_svmp_n1_5, 
+                                svm_rad = mod_ml_tf_svmr_n1_5))
+
+bwplot(Comp_n1_5_tf, metric="Accuracy") 
+
+#Финансы и текущие ТФ-ИДФ 
+set.seed(1234) #логит
+mod_ml_tf_glm_all0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "glmnet", trControl = Control)
+best_tf_glm_all0_1 <- print.train(mod_ml_tf_glm_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_glm_all_0_1 <- mod_ml_tf_glm_all0_1$resample$Accuracy
+mod_ml_tf_glm_all0_1_acc <- mod_ml_tf_glm_all0_1$results[best_tf_glm_all0_1[,5] == "*", 3]
+mod_ml_tf_glm_all0_1_sd <- mod_ml_tf_glm_all0_1$results[best_tf_glm_all0_1[,5] == "*", 5]
+mod_ml_tf_glm_all0_1_int_a <- mod_ml_tf_glm_all0_1_acc - (1.645 * mod_ml_tf_glm_all0_1_sd)
+mod_ml_tf_glm_all0_1_int_b <- mod_ml_tf_glm_all0_1_acc + (1.645 * mod_ml_tf_glm_all0_1_sd)
+mod_ml_tf_glm_all0_1_better <- ifelse(mod_ml_tf_glm_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234) #rf
+mod_ml_tf_rf_all0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "rf", trControl = Control)
+best_tf_rf_all0_1 <-print.train(mod_ml_tf_rf_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_rf_all_0_1 <- mod_ml_tf_rf_all0_1$resample$Accuracy
+mod_ml_tf_rf_all0_1_acc <- mod_ml_tf_rf_all0_1$results[best_tf_rf_all0_1[,4] == "*", 2]
+mod_ml_tf_rf_all0_1_sd <- mod_ml_tf_rf_all0_1$results[best_tf_rf_all0_1[,4] == "*", 4]
+mod_ml_tf_rf_all0_1_int_a <- mod_ml_tf_rf_all0_1_acc - (1.645 * mod_ml_tf_rf_all0_1_sd)
+mod_ml_tf_rf_all0_1_int_b <- mod_ml_tf_rf_all0_1_acc + (1.645 * mod_ml_tf_rf_all0_1_sd)
+mod_ml_tf_rf_all0_1_better <- ifelse(mod_ml_tf_rf_all0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_tf_bayes_all0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "naive_bayes", trControl = Control)
+best_tf_bayes_all0_1 <- print.train(mod_ml_tf_bayes_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_bayes_all_0_1 <- mod_ml_tf_bayes_all0_1$resample$Accuracy
+mod_ml_tf_bayes_all0_1_acc <- mod_ml_tf_bayes_all0_1$results[best_tf_bayes_all0_1[,4] == "*", 4]
+mod_ml_tf_bayes_all0_1_sd <- mod_ml_tf_bayes_all0_1$results[best_tf_bayes_all0_1[,4] == "*", 6]
+mod_ml_tf_bayes_all0_1_int_a <- mod_ml_tf_bayes_all0_1_acc - (1.645 * mod_ml_tf_bayes_all0_1_sd)
+mod_ml_tf_bayes_all0_1_int_b <- mod_ml_tf_bayes_all0_1_acc + (1.645 * mod_ml_tf_bayes_all0_1_sd)
+mod_ml_tf_bayes_all0_1_better <- ifelse(mod_ml_tf_bayes_all0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_tf_boost_all0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_tf_boost_all0_1 <- print.train(mod_ml_tf_boost_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_boost_all_0_1 <- mod_ml_tf_boost_all0_1$resample$Accuracy
+mod_ml_tf_boost_all0_1_acc <- mod_ml_tf_boost_all0_1$results[best_tf_boost_all0_1[,5] == "*", 5]
+mod_ml_tf_boost_all0_1_sd <- mod_ml_tf_boost_all0_1$results[best_tf_boost_all0_1[,5] == "*", 7]
+mod_ml_tf_boost_all0_1_int_a <- mod_ml_tf_boost_all0_1_acc - (1.645 * mod_ml_tf_boost_all0_1_sd)
+mod_ml_tf_boost_all0_1_int_b <- mod_ml_tf_boost_all0_1_acc + (1.645 * mod_ml_tf_boost_all0_1_sd)
+mod_ml_tf_boost_all0_1_better <- ifelse(mod_ml_tf_boost_all0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_tf_svml_all0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_tf_svml_all0_1 <- print.train(mod_ml_tf_svml_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svml_all_0_1 <- mod_ml_tf_svml_all0_1$resample$Accuracy
+mod_ml_tf_svml_all0_1_acc <- mod_ml_tf_svml_all0_1$results$Accuracy
+mod_ml_tf_svml_all0_1_sd <- mod_ml_tf_svml_all0_1$results$AccuracySD
+mod_ml_tf_svml_all0_1_int_a <- mod_ml_tf_svml_all0_1_acc - (1.645 * mod_ml_tf_svml_all0_1_sd)
+mod_ml_tf_svml_all0_1_int_b <- mod_ml_tf_svml_all0_1_acc + (1.645 * mod_ml_tf_svml_all0_1_sd)
+mod_ml_tf_svml_all0_1_better <- ifelse(mod_ml_tf_svml_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmp_all0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "svmPoly", 
+                                tuneLength = 3, trControl = Control, verbose = FALSE)
+best_tf_svmp_all0_1 <- print.train(mod_ml_tf_svmp_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmp_all_0_1 <- mod_ml_tf_svmp_all0_1$resample$Accuracy
+mod_ml_tf_svmp_all0_1_acc <- mod_ml_tf_svmp_all0_1$results[best_tf_svmp_all0_1[,6] == "*", 4]
+mod_ml_tf_svmp_all0_1_sd <- mod_ml_tf_svmp_all0_1$results[best_tf_svmp_all0_1[,6] == "*", 6]
+mod_ml_tf_svmp_all0_1_int_a <- mod_ml_tf_svmp_all0_1_acc - (1.645 * mod_ml_tf_svmp_all0_1_sd)
+mod_ml_tf_svmp_all0_1_int_b <- mod_ml_tf_svmp_all0_1_acc + (1.645 * mod_ml_tf_svmp_all0_1_sd)
+mod_ml_tf_svmp_all0_1_better <- ifelse(mod_ml_tf_svmp_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmr_all0_1 <- train(y = toyota_tf_ok_mod$toyota_diff, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "svmRadial", 
+                                tuneLength = 5, trControl = Control, verbose = FALSE)
+best_tf_svmr_all0_1 <- print.train(mod_ml_tf_svmr_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmr_all_0_1 <- mod_ml_tf_svmr_all0_1$resample$Accuracy
+mod_ml_tf_svmr_all0_1_acc <- mod_ml_tf_svmr_all0_1$results[best_tf_svmr_all0_1[,4] == "*", 3]
+mod_ml_tf_svmr_all0_1_sd <- mod_ml_tf_svmr_all0_1$results[best_tf_svmr_all0_1[,4] == "*", 5]
+mod_ml_tf_svmr_all0_1_int_a <- mod_ml_tf_svmr_all0_1_acc - (1.645 * mod_ml_tf_svmr_all0_1_sd)
+mod_ml_tf_svmr_all0_1_int_b <- mod_ml_tf_svmr_all0_1_acc + (1.645 * mod_ml_tf_svmr_all0_1_sd)
+mod_ml_tf_svmr_all0_1_better <- ifelse(mod_ml_tf_svmr_all0_1_int_a > 0.5, '+', '-')
+
+Comp_all0_1_tf <- resamples(list(bayes = mod_ml_tf_bayes_all0_1,
+                                  logit = mod_ml_tf_glm_all0_1,
+                                  rf = mod_ml_tf_rf_all0_1,
+                                  boost = mod_ml_tf_boost_all0_1,
+                                  svm_lin = mod_ml_tf_svml_all0_1, 
+                                  svm_poly = mod_ml_tf_svmp_all0_1, 
+                                  svm_rad = mod_ml_tf_svmr_all0_1))
+
+bwplot(Comp_all0_1_tf, metric="Accuracy")
+
+#ТФ лаги и финансы 
+set.seed(1234) #логит
+mod_ml_tf_glm_all1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "glmnet", trControl = Control)
+best_tf_glm_all1_5 <- print.train(mod_ml_tf_glm_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_glm_all_1_5 <- mod_ml_tf_glm_all1_5$resample$Accuracy
+mod_ml_tf_glm_all1_5_acc <- mod_ml_tf_glm_all1_5$results[best_tf_glm_all1_5[,5] == "*", 3]
+mod_ml_tf_glm_all1_5_sd <- mod_ml_tf_glm_all1_5$results[best_tf_glm_all1_5[,5] == "*", 5]
+mod_ml_tf_glm_all1_5_int_a <- mod_ml_tf_glm_all1_5_acc - (1.645 * mod_ml_tf_glm_all1_5_sd)
+mod_ml_tf_glm_all1_5_int_b <- mod_ml_tf_glm_all1_5_acc + (1.645 * mod_ml_tf_glm_all1_5_sd)
+mod_ml_tf_glm_all1_5_better <- ifelse(mod_ml_tf_glm_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_tf_rf_all1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "rf", trControl = Control)
+best_tf_rf_all1_5 <-print.train(mod_ml_tf_rf_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_rf_all_1_5 <- mod_ml_tf_rf_all1_5$resample$Accuracy
+mod_ml_tf_rf_all1_5_acc <- mod_ml_tf_rf_all1_5$results[best_tf_rf_all1_5[,4] == "*", 2]
+mod_ml_tf_rf_all1_5_sd <- mod_ml_tf_rf_all1_5$results[best_tf_rf_all1_5[,4] == "*", 4]
+mod_ml_tf_rf_all1_5_int_a <- mod_ml_tf_rf_all1_5_acc - (1.645 * mod_ml_tf_rf_all1_5_sd)
+mod_ml_tf_rf_all1_5_int_b <- mod_ml_tf_rf_all1_5_acc + (1.645 * mod_ml_tf_rf_all1_5_sd)
+mod_ml_tf_rf_all1_5_better <- ifelse(mod_ml_tf_rf_all1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_tf_bayes_all1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "naive_bayes", trControl = Control)
+best_tf_bayes_all1_5 <- print.train(mod_ml_tf_bayes_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_bayes_all_1_5 <- mod_ml_tf_bayes_all1_5$resample$Accuracy
+mod_ml_tf_bayes_all1_5_acc <- mod_ml_tf_bayes_all1_5$results[best_tf_bayes_all1_5[,4] == "*", 4]
+mod_ml_tf_bayes_all1_5_sd <- mod_ml_tf_bayes_all1_5$results[best_tf_bayes_all1_5[,4] == "*", 6]
+mod_ml_tf_bayes_all1_5_int_a <- mod_ml_tf_bayes_all1_5_acc - (1.645 * mod_ml_tf_bayes_all1_5_sd)
+mod_ml_tf_bayes_all1_5_int_b <- mod_ml_tf_bayes_all1_5_acc + (1.645 * mod_ml_tf_bayes_all1_5_sd)
+mod_ml_tf_bayes_all1_5_better <- ifelse(mod_ml_tf_bayes_all1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_tf_boost_all1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_tf_boost_all1_5 <- print.train(mod_ml_tf_boost_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_boost_all_1_5 <- mod_ml_tf_boost_all1_5$resample$Accuracy
+mod_ml_tf_boost_all1_5_acc <- mod_ml_tf_boost_all1_5$results[best_tf_boost_all1_5[,5] == "*", 5]
+mod_ml_tf_boost_all1_5_sd <- mod_ml_tf_boost_all1_5$results[best_tf_boost_all1_5[,5] == "*", 7]
+mod_ml_tf_boost_all1_5_int_a <- mod_ml_tf_boost_all1_5_acc - (1.645 * mod_ml_tf_boost_all1_5_sd)
+mod_ml_tf_boost_all1_5_int_b <- mod_ml_tf_boost_all1_5_acc + (1.645 * mod_ml_tf_boost_all1_5_sd)
+mod_ml_tf_boost_all1_5_better <- ifelse(mod_ml_tf_boost_all1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_tf_svml_all1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_tf_svml_all1_5 <- print.train(mod_ml_tf_svml_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svml_all_1_5 <- mod_ml_tf_svml_all1_5$resample$Accuracy
+mod_ml_tf_svml_all1_5_acc <- mod_ml_tf_svml_all1_5$results$Accuracy
+mod_ml_tf_svml_all1_5_sd <- mod_ml_tf_svml_all1_5$results$AccuracySD
+mod_ml_tf_svml_all1_5_int_a <- mod_ml_tf_svml_all1_5_acc - (1.645 * mod_ml_tf_svml_all1_5_sd)
+mod_ml_tf_svml_all1_5_int_b <- mod_ml_tf_svml_all1_5_acc + (1.645 * mod_ml_tf_svml_all1_5_sd)
+mod_ml_tf_svml_all1_5_better <- ifelse(mod_ml_tf_svml_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmp_all1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "svmPoly", 
+                                tuneLength = 3, trControl = Control, verbose = FALSE)
+best_tf_svmp_all1_5 <- print.train(mod_ml_tf_svmp_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmp_all_1_5 <- mod_ml_tf_svmp_all1_5$resample$Accuracy
+mod_ml_tf_svmp_all1_5_acc <- mod_ml_tf_svmp_all1_5$results[best_tf_svmp_all1_5[,6] == "*", 4]
+mod_ml_tf_svmp_all1_5_sd <- mod_ml_tf_svmp_all1_5$results[best_tf_svmp_all1_5[,6] == "*", 6]
+mod_ml_tf_svmp_all1_5_int_a <- mod_ml_tf_svmp_all1_5_acc - (1.645 * mod_ml_tf_svmp_all1_5_sd)
+mod_ml_tf_svmp_all1_5_int_b <- mod_ml_tf_svmp_all1_5_acc + (1.645 * mod_ml_tf_svmp_all1_5_sd)
+mod_ml_tf_svmp_all1_5_better <- ifelse(mod_ml_tf_svmp_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_tf_svmr_all1_5 <- train(y = toyota_tf_ok_mod_1$toyota_diff, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "svmRadial", 
+                                tuneLength = 5, trControl = Control, verbose = FALSE)
+best_tf_svmr_all1_5 <- print.train(mod_ml_tf_svmr_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_svmr_all_1_5 <- mod_ml_tf_svmr_all1_5$resample$Accuracy
+mod_ml_tf_svmr_all1_5_acc <- mod_ml_tf_svmr_all1_5$results[best_tf_svmr_all1_5[,4] == "*", 3]
+mod_ml_tf_svmr_all1_5_sd <- mod_ml_tf_svmr_all1_5$results[best_tf_svmr_all1_5[,4] == "*", 5]
+mod_ml_tf_svmr_all1_5_int_a <- mod_ml_tf_svmr_all1_5_acc - (1.645 * mod_ml_tf_svmr_all1_5_sd)
+mod_ml_tf_svmr_all1_5_int_b <- mod_ml_tf_svmr_all1_5_acc + (1.645 * mod_ml_tf_svmr_all1_5_sd)
+mod_ml_tf_svmr_all1_5_better <- ifelse(mod_ml_tf_svmr_all1_5_int_a > 0.5, '+', '-')
+
+Comp_all1_5_tf <- resamples(list(bayes = mod_ml_tf_bayes_all1_5,
+                                  logit = mod_ml_tf_glm_all1_5,
+                                  rf = mod_ml_tf_rf_all1_5,
+                                  boost = mod_ml_tf_boost_all1_5,
+                                  svm_lin = mod_ml_tf_svml_all1_5, 
+                                  svm_poly = mod_ml_tf_svmp_all1_5, 
+                                  svm_rad = mod_ml_tf_svmr_all1_5))
+
+bwplot(Comp_all1_5_tf, metric="Accuracy")
+
+#Таблица - итоговая 
+ml_accuracy_tf <- c(mod_ml_tf_glm_fin_acc, mod_ml_tf_rf_fin_acc, mod_ml_tf_bayes_fin_acc, 
+                     mod_ml_tf_boost_fin_acc, mod_ml_tf_svml_fin_acc, mod_ml_tf_svmp_fin_acc, mod_ml_tf_svmr_fin_acc, 
+                     mod_ml_tf_glm_n0_1_acc, mod_ml_tf_rf_n0_1_acc, mod_ml_tf_bayes_n0_1_acc, 
+                     mod_ml_tf_boost_n0_1_acc, mod_ml_tf_svml_n0_1_acc, mod_ml_tf_svmp_n0_1_acc, mod_ml_tf_svmr_n0_1_acc,
+                     mod_ml_tf_glm_n1_5_acc, mod_ml_tf_rf_n1_5_acc, mod_ml_tf_bayes_n1_5_acc, 
+                     mod_ml_tf_boost_n1_5_acc, mod_ml_tf_svml_n1_5_acc, mod_ml_tf_svmp_n1_5_acc, mod_ml_tf_svmr_n1_5_acc,
+                     mod_ml_tf_glm_all0_1_acc, mod_ml_tf_rf_all0_1_acc, mod_ml_tf_bayes_all0_1_acc, 
+                     mod_ml_tf_boost_all0_1_acc, mod_ml_tf_svml_all0_1_acc, mod_ml_tf_svmp_all0_1_acc, mod_ml_tf_svmr_all0_1_acc, 
+                     mod_ml_tf_glm_all1_5_acc, mod_ml_tf_rf_all1_5_acc, mod_ml_tf_bayes_all1_5_acc, 
+                     mod_ml_tf_boost_all1_5_acc, mod_ml_tf_svml_all1_5_acc, mod_ml_tf_svmp_all1_5_acc, mod_ml_tf_svmr_all1_5_acc)
+
+ml_sd_a_tf <- c(mod_ml_tf_glm_fin_int_a, mod_ml_tf_rf_fin_int_a, mod_ml_tf_bayes_fin_int_a, 
+                 mod_ml_tf_boost_fin_int_a, mod_ml_tf_svml_fin_int_a, mod_ml_tf_svmp_fin_int_a, mod_ml_tf_svmr_fin_int_a, 
+                 mod_ml_tf_glm_n0_1_int_a, mod_ml_tf_rf_n0_1_int_a, mod_ml_tf_bayes_n0_1_int_a, 
+                 mod_ml_tf_boost_n0_1_int_a, mod_ml_tf_svml_n0_1_int_a, mod_ml_tf_svmp_n0_1_int_a, mod_ml_tf_svmr_n0_1_int_a,
+                 mod_ml_tf_glm_n1_5_int_a, mod_ml_tf_rf_n1_5_int_a, mod_ml_tf_bayes_n1_5_int_a, 
+                 mod_ml_tf_boost_n1_5_int_a, mod_ml_tf_svml_n1_5_int_a, mod_ml_tf_svmp_n1_5_int_a, mod_ml_tf_svmr_n1_5_int_a,
+                 mod_ml_tf_glm_all0_1_int_a, mod_ml_tf_rf_all0_1_int_a, mod_ml_tf_bayes_all0_1_int_a, 
+                 mod_ml_tf_boost_all0_1_int_a, mod_ml_tf_svml_all0_1_int_a, mod_ml_tf_svmp_all0_1_int_a, mod_ml_tf_svmr_all0_1_int_a, 
+                 mod_ml_tf_glm_all1_5_int_a, mod_ml_tf_rf_all1_5_int_a, mod_ml_tf_bayes_all1_5_int_a, 
+                 mod_ml_tf_boost_all1_5_int_a, mod_ml_tf_svml_all1_5_int_a, mod_ml_tf_svmp_all1_5_int_a, mod_ml_tf_svmr_all1_5_int_a)
+
+ml_sd_b_tf <- c(mod_ml_tf_glm_fin_int_b, mod_ml_tf_rf_fin_int_b, mod_ml_tf_bayes_fin_int_b, 
+                 mod_ml_tf_boost_fin_int_b, mod_ml_tf_svml_fin_int_b, mod_ml_tf_svmp_fin_int_b, mod_ml_tf_svmr_fin_int_b, 
+                 mod_ml_tf_glm_n0_1_int_b, mod_ml_tf_rf_n0_1_int_b, mod_ml_tf_bayes_n0_1_int_b, 
+                 mod_ml_tf_boost_n0_1_int_b, mod_ml_tf_svml_n0_1_int_b, mod_ml_tf_svmp_n0_1_int_b, mod_ml_tf_svmr_n0_1_int_b,
+                 mod_ml_tf_glm_n1_5_int_b, mod_ml_tf_rf_n1_5_int_b, mod_ml_tf_bayes_n1_5_int_b, 
+                 mod_ml_tf_boost_n1_5_int_b, mod_ml_tf_svml_n1_5_int_b, mod_ml_tf_svmp_n1_5_int_b, mod_ml_tf_svmr_n1_5_int_b,
+                 mod_ml_tf_glm_all0_1_int_b, mod_ml_tf_rf_all0_1_int_b, mod_ml_tf_bayes_all0_1_int_b, 
+                 mod_ml_tf_boost_all0_1_int_b, mod_ml_tf_svml_all0_1_int_b, mod_ml_tf_svmp_all0_1_int_b, mod_ml_tf_svmr_all0_1_int_b, 
+                 mod_ml_tf_glm_all1_5_int_b, mod_ml_tf_rf_all1_5_int_b, mod_ml_tf_bayes_all1_5_int_b, 
+                 mod_ml_tf_boost_all1_5_int_b, mod_ml_tf_svml_all1_5_int_b, mod_ml_tf_svmp_all1_5_int_b, mod_ml_tf_svmr_all1_5_int_b)
+
+ml_better_tf <- c(mod_ml_tf_glm_fin_better, mod_ml_tf_rf_fin_better, mod_ml_tf_bayes_fin_better, 
+                   mod_ml_tf_boost_fin_better, mod_ml_tf_svml_fin_better, mod_ml_tf_svmp_fin_better, mod_ml_tf_svmr_fin_better, 
+                   mod_ml_tf_glm_n0_1_better, mod_ml_tf_rf_n0_1_better, mod_ml_tf_bayes_n0_1_better, 
+                   mod_ml_tf_boost_n0_1_better, mod_ml_tf_svml_n0_1_better, mod_ml_tf_svmp_n0_1_better, mod_ml_tf_svmr_n0_1_better,
+                   mod_ml_tf_glm_n1_5_better, mod_ml_tf_rf_n1_5_better, mod_ml_tf_bayes_n1_5_better, 
+                   mod_ml_tf_boost_n1_5_better, mod_ml_tf_svml_n1_5_better, mod_ml_tf_svmp_n1_5_better, mod_ml_tf_svmr_n1_5_better,
+                   mod_ml_tf_glm_all0_1_better, mod_ml_tf_rf_all0_1_better, mod_ml_tf_bayes_all0_1_better, 
+                   mod_ml_tf_boost_all0_1_better, mod_ml_tf_svml_all0_1_better, mod_ml_tf_svmp_all0_1_better, mod_ml_tf_svmr_all0_1_better, 
+                   mod_ml_tf_glm_all1_5_better, mod_ml_tf_rf_all1_5_better, mod_ml_tf_bayes_all1_5_better, 
+                   mod_ml_tf_boost_all1_5_better, mod_ml_tf_svml_all1_5_better, mod_ml_tf_svmp_all1_5_better, mod_ml_tf_svmr_all1_5_better)
+ml_type_tf <- c('Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial', 
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial')
+
+table_ml_tf <- data.frame(ml_type_tf, ml_sd_a_tf, ml_sd_b_tf, ml_accuracy_tf, ml_better_tf)
+
+rownames(table_ml_tf)[1] <- 'Использование только финансовой нформации'
+rownames(table_ml_tf)[8] <- 'Использование только новостной информации (текущая)'
+rownames(table_ml_tf)[15] <- 'Использование лагированной новостной информации'
+rownames(table_ml_tf)[22] <- 'Оба канала информации (текущая)'
+rownames(table_ml_tf)[29] <- 'Оба канала информации (новости ланированные)'
+
+table_ml_tf$ml_sd_a_tf <- round(table_ml_tf$ml_sd_a_tf, 4)
+table_ml_tf$ml_sd_b_tf <- round(table_ml_tf$ml_sd_b_tf, 4)
+table_ml_tf$ml_accuracy_tf <- round(table_ml_tf$ml_accuracy_tf, 4)
+
+table_ml_tf
+
+#Выгрузим
+table_ml_tf_done_toyota <- table_ml_tf %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование методов машинного обучения для классификации доходностей на разных источниках данных по TF-IDF")
+  ) 
+gtsave(table_ml_tf_done_toyota, filename = 'table_ml_tf_done_toyota.html')
+
+
+#### Теперь классификация больших доходностей ####
+k <- median(abs(toyota_tf_ok_mod$toyota_y_ok))
+toyota_tf_ok_mod$big <- ifelse(abs(toyota_tf_ok_mod$toyota_y_ok) > k, 1, 0)
+sum(toyota_tf_ok_mod$big)
+toyota_tf_ok_mod$big <- as.factor(toyota_tf_ok_mod$big)
+head(toyota_tf_ok_mod)
+
+k <- median(abs(toyota_tf_ok_mod_1$toyota_y_ok))
+toyota_tf_ok_mod_1$big <- ifelse(abs(toyota_tf_ok_mod_1$toyota_y_ok) > k, 1, 0)
+sum(toyota_tf_ok_mod_1$big)
+toyota_tf_ok_mod_1$big <- as.factor(toyota_tf_ok_mod_1$big)
+head(toyota_tf_ok_mod_1)
+
+#Модели только на финансах - 2 лага 
+set.seed(1234) #логит
+mod_b_ml_tf_glm_fin <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,51:52],  method = "glmnet", trControl = Control)
+best_b_tf_glm_fin <- print.train(mod_b_ml_tf_glm_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_glm_f <- mod_b_ml_tf_glm_fin$resample$Accuracy
+mod_b_ml_tf_glm_fin_acc <- mod_b_ml_tf_glm_fin$results[best_b_tf_glm_fin[,5] == "*", 3]
+mod_b_ml_tf_glm_fin_sd <- mod_b_ml_tf_glm_fin$results[best_b_tf_glm_fin[,5] == "*", 5]
+mod_b_ml_tf_glm_fin_int_a <- mod_b_ml_tf_glm_fin_acc - (1.645 * mod_b_ml_tf_glm_fin_sd)
+mod_b_ml_tf_glm_fin_int_b <- mod_b_ml_tf_glm_fin_acc + (1.645 * mod_b_ml_tf_glm_fin_sd)
+mod_b_ml_tf_glm_fin_better <- ifelse(mod_b_ml_tf_glm_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_tf_rf_fin <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,51:52],  method = "rf", trControl = Control)
+best_b_tf_rf_fin <-print.train(mod_b_ml_tf_rf_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_rf_f <- mod_b_ml_tf_rf_fin$resample$Accuracy
+mod_b_ml_tf_rf_fin_acc <- mod_b_ml_tf_rf_fin$results$Accuracy
+mod_b_ml_tf_rf_fin_sd <- mod_b_ml_tf_rf_fin$results$AccuracySD
+mod_b_ml_tf_rf_fin_int_a <- mod_b_ml_tf_rf_fin_acc - (1.645 * mod_b_ml_tf_rf_fin_sd)
+mod_b_ml_tf_rf_fin_int_b <- mod_b_ml_tf_rf_fin_acc + (1.645 * mod_b_ml_tf_rf_fin_sd)
+mod_b_ml_tf_rf_fin_better <- ifelse(mod_b_ml_tf_rf_fin_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_tf_bayes_fin <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,51:52],  method = "naive_bayes", trControl = Control)
+best_b_tf_bayes_fin <- print.train(mod_b_ml_tf_bayes_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_bayes_f <- mod_b_ml_tf_bayes_fin$resample$Accuracy
+mod_b_ml_tf_bayes_fin_acc <- mod_b_ml_tf_bayes_fin$results[best_b_tf_bayes_fin[,4] == "*", 4]
+mod_b_ml_tf_bayes_fin_sd <- mod_b_ml_tf_bayes_fin$results[best_b_tf_bayes_fin[,4] == "*", 6]
+mod_b_ml_tf_bayes_fin_int_a <- mod_b_ml_tf_bayes_fin_acc - (1.645 * mod_b_ml_tf_bayes_fin_sd)
+mod_b_ml_tf_bayes_fin_int_b <- mod_b_ml_tf_bayes_fin_acc + (1.645 * mod_b_ml_tf_bayes_fin_sd)
+mod_b_ml_tf_bayes_fin_better <- ifelse(mod_b_ml_tf_bayes_fin_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_tf_boost_fin <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,51:52],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_tf_boost_fin <- print.train(mod_b_ml_tf_boost_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_boost_f <- mod_b_ml_tf_boost_fin$resample$Accuracy
+mod_b_ml_tf_boost_fin_acc <- mod_b_ml_tf_boost_fin$results[best_b_tf_boost_fin[,5] == "*", 5]
+mod_b_ml_tf_boost_fin_sd <- mod_b_ml_tf_boost_fin$results[best_b_tf_boost_fin[,5] == "*", 7]
+mod_b_ml_tf_boost_fin_int_a <- mod_b_ml_tf_boost_fin_acc - (1.645 * mod_b_ml_tf_boost_fin_sd)
+mod_b_ml_tf_boost_fin_int_b <- mod_b_ml_tf_boost_fin_acc + (1.645 * mod_b_ml_tf_boost_fin_sd)
+mod_b_ml_tf_boost_fin_better <- ifelse(mod_b_ml_tf_boost_fin_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_tf_svml_fin <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,51:52],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_tf_svml_fin <- print.train(mod_b_ml_tf_svml_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svml_f <- mod_b_ml_tf_svml_fin$resample$Accuracy
+mod_b_ml_tf_svml_fin_acc <- mod_b_ml_tf_svml_fin$results$Accuracy
+mod_b_ml_tf_svml_fin_sd <- mod_b_ml_tf_svml_fin$results$AccuracySD
+mod_b_ml_tf_svml_fin_int_a <- mod_b_ml_tf_svml_fin_acc - (1.645 * mod_b_ml_tf_svml_fin_sd)
+mod_b_ml_tf_svml_fin_int_b <- mod_b_ml_tf_svml_fin_acc + (1.645 * mod_b_ml_tf_svml_fin_sd)
+mod_b_ml_tf_svml_fin_better <- ifelse(mod_b_ml_tf_svml_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmp_fin <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,51:52],  method = "svmPoly", 
+                               tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_tf_svmp_fin <- print.train(mod_b_ml_tf_svmp_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmp_f <- mod_b_ml_tf_svmp_fin$resample$Accuracy
+mod_b_ml_tf_svmp_fin_acc <- mod_b_ml_tf_svmp_fin$results[best_b_tf_svmp_fin[,6] == "*", 4]
+mod_b_ml_tf_svmp_fin_sd <- mod_b_ml_tf_svmp_fin$results[best_b_tf_svmp_fin[,6] == "*", 6]
+mod_b_ml_tf_svmp_fin_int_a <- mod_b_ml_tf_svmp_fin_acc - (1.645 * mod_b_ml_tf_svmp_fin_sd)
+mod_b_ml_tf_svmp_fin_int_b <- mod_b_ml_tf_svmp_fin_acc + (1.645 * mod_b_ml_tf_svmp_fin_sd)
+mod_b_ml_tf_svmp_fin_better <- ifelse(mod_b_ml_tf_svmp_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmr_fin <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,51:52],  method = "svmRadial", 
+                               tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_tf_svmr_fin <- print.train(mod_b_ml_tf_svmr_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmr_f <- mod_b_ml_tf_svmr_fin$resample$Accuracy
+mod_b_ml_tf_svmr_fin_acc <- mod_b_ml_tf_svmr_fin$results[best_b_tf_svmr_fin[,4] == "*", 3]
+mod_b_ml_tf_svmr_fin_sd <- mod_b_ml_tf_svmr_fin$results[best_b_tf_svmr_fin[,4] == "*", 5]
+mod_b_ml_tf_svmr_fin_int_a <- mod_b_ml_tf_svmr_fin_acc - (1.645 * mod_b_ml_tf_svmr_fin_sd)
+mod_b_ml_tf_svmr_fin_int_b <- mod_b_ml_tf_svmr_fin_acc + (1.645 * mod_b_ml_tf_svmr_fin_sd)
+mod_b_ml_tf_svmr_fin_better <- ifelse(mod_b_ml_tf_svmr_fin_int_a > 0.5, '+', '-')
+
+Comp_fin_tf <- resamples(list(bayes = mod_b_ml_tf_bayes_fin,
+                               logit = mod_b_ml_tf_glm_fin,
+                               rf = mod_b_ml_tf_rf_fin,
+                               boost = mod_b_ml_tf_boost_fin,
+                               svm_lin = mod_b_ml_tf_svml_fin, 
+                               svm_poly = mod_b_ml_tf_svmp_fin, 
+                               svm_rad = mod_b_ml_tf_svmr_fin))
+
+bwplot(Comp_fin_tf, metric="Accuracy")
+
+#Текущие ТФ-ИДФ 
+set.seed(1234) #логит
+mod_b_ml_tf_glm_n0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,4:50],  method = "glmnet", trControl = Control)
+best_b_tf_glm_n0_1 <- print.train(mod_b_ml_tf_glm_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_glm_n_0_1 <- mod_b_ml_tf_glm_n0_1$resample$Accuracy
+mod_b_ml_tf_glm_n0_1_acc <- mod_b_ml_tf_glm_n0_1$results[best_b_tf_glm_n0_1[,5] == "*", 3]
+mod_b_ml_tf_glm_n0_1_sd <- mod_b_ml_tf_glm_n0_1$results[best_b_tf_glm_n0_1[,5] == "*", 5]
+mod_b_ml_tf_glm_n0_1_int_a <- mod_b_ml_tf_glm_n0_1_acc - (1.645 * mod_b_ml_tf_glm_n0_1_sd)
+mod_b_ml_tf_glm_n0_1_int_b <- mod_b_ml_tf_glm_n0_1_acc + (1.645 * mod_b_ml_tf_glm_n0_1_sd)
+mod_b_ml_tf_glm_n0_1_better <- ifelse(mod_b_ml_tf_glm_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_tf_rf_n0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,4:50],  method = "rf", trControl = Control)
+best_b_tf_rf_n0_1 <-print.train(mod_b_ml_tf_rf_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_rf_n_0_1 <- mod_b_ml_tf_rf_n0_1$resample$Accuracy
+mod_b_ml_tf_rf_n0_1_acc <- mod_b_ml_tf_rf_n0_1$results[best_b_tf_rf_n0_1[,4] == "*", 2]
+mod_b_ml_tf_rf_n0_1_sd <- mod_b_ml_tf_rf_n0_1$results[best_b_tf_rf_n0_1[,4] == "*", 4]
+mod_b_ml_tf_rf_n0_1_int_a <- mod_b_ml_tf_rf_n0_1_acc - (1.645 * mod_b_ml_tf_rf_n0_1_sd)
+mod_b_ml_tf_rf_n0_1_int_b <- mod_b_ml_tf_rf_n0_1_acc + (1.645 * mod_b_ml_tf_rf_n0_1_sd)
+mod_b_ml_tf_rf_n0_1_better <- ifelse(mod_b_ml_tf_rf_n0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_tf_bayes_n0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,4:50],  method = "naive_bayes", trControl = Control)
+best_b_tf_bayes_n0_1 <- print.train(mod_b_ml_tf_bayes_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_bayes_n_0_1 <- mod_b_ml_tf_bayes_n0_1$resample$Accuracy
+mod_b_ml_tf_bayes_n0_1_acc <- mod_b_ml_tf_bayes_n0_1$results[best_b_tf_bayes_n0_1[,4] == "*", 4]
+mod_b_ml_tf_bayes_n0_1_sd <- mod_b_ml_tf_bayes_n0_1$results[best_b_tf_bayes_n0_1[,4] == "*", 6]
+mod_b_ml_tf_bayes_n0_1_int_a <- mod_b_ml_tf_bayes_n0_1_acc - (1.645 * mod_b_ml_tf_bayes_n0_1_sd)
+mod_b_ml_tf_bayes_n0_1_int_b <- mod_b_ml_tf_bayes_n0_1_acc + (1.645 * mod_b_ml_tf_bayes_n0_1_sd)
+mod_b_ml_tf_bayes_n0_1_better <- ifelse(mod_b_ml_tf_bayes_n0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_tf_boost_n0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,4:50],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_tf_boost_n0_1 <- print.train(mod_b_ml_tf_boost_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_boost_n_0_1 <- mod_b_ml_tf_boost_n0_1$resample$Accuracy
+mod_b_ml_tf_boost_n0_1_acc <- mod_b_ml_tf_boost_n0_1$results[best_b_tf_boost_n0_1[,5] == "*", 5]
+mod_b_ml_tf_boost_n0_1_sd <- mod_b_ml_tf_boost_n0_1$results[best_b_tf_boost_n0_1[,5] == "*", 7]
+mod_b_ml_tf_boost_n0_1_int_a <- mod_b_ml_tf_boost_n0_1_acc - (1.645 * mod_b_ml_tf_boost_n0_1_sd)
+mod_b_ml_tf_boost_n0_1_int_b <- mod_b_ml_tf_boost_n0_1_acc + (1.645 * mod_b_ml_tf_boost_n0_1_sd)
+mod_b_ml_tf_boost_n0_1_better <- ifelse(mod_b_ml_tf_boost_n0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_tf_svml_n0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,4:50],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_tf_svml_n0_1 <- print.train(mod_b_ml_tf_svml_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svml_n_0_1 <- mod_b_ml_tf_svml_n0_1$resample$Accuracy
+mod_b_ml_tf_svml_n0_1_acc <- mod_b_ml_tf_svml_n0_1$results$Accuracy
+mod_b_ml_tf_svml_n0_1_sd <- mod_b_ml_tf_svml_n0_1$results$AccuracySD
+mod_b_ml_tf_svml_n0_1_int_a <- mod_b_ml_tf_svml_n0_1_acc - (1.645 * mod_b_ml_tf_svml_n0_1_sd)
+mod_b_ml_tf_svml_n0_1_int_b <- mod_b_ml_tf_svml_n0_1_acc + (1.645 * mod_b_ml_tf_svml_n0_1_sd)
+mod_b_ml_tf_svml_n0_1_better <- ifelse(mod_b_ml_tf_svml_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmp_n0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,4:50],  method = "svmPoly", 
+                                tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_tf_svmp_n0_1 <- print.train(mod_b_ml_tf_svmp_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmp_n_0_1 <- mod_b_ml_tf_svmp_n0_1$resample$Accuracy
+mod_b_ml_tf_svmp_n0_1_acc <- mod_b_ml_tf_svmp_n0_1$results[best_b_tf_svmp_n0_1[,6] == "*", 4]
+mod_b_ml_tf_svmp_n0_1_sd <- mod_b_ml_tf_svmp_n0_1$results[best_b_tf_svmp_n0_1[,6] == "*", 6]
+mod_b_ml_tf_svmp_n0_1_int_a <- mod_b_ml_tf_svmp_n0_1_acc - (1.645 * mod_b_ml_tf_svmp_n0_1_sd)
+mod_b_ml_tf_svmp_n0_1_int_b <- mod_b_ml_tf_svmp_n0_1_acc + (1.645 * mod_b_ml_tf_svmp_n0_1_sd)
+mod_b_ml_tf_svmp_n0_1_better <- ifelse(mod_b_ml_tf_svmp_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmr_n0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,4:50],  method = "svmRadial", 
+                                tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_tf_svmr_n0_1 <- print.train(mod_b_ml_tf_svmr_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmr_n_0_1 <- mod_b_ml_tf_svmr_n0_1$resample$Accuracy
+mod_b_ml_tf_svmr_n0_1_acc <- mod_b_ml_tf_svmr_n0_1$results[best_b_tf_svmr_n0_1[,4] == "*", 3]
+mod_b_ml_tf_svmr_n0_1_sd <- mod_b_ml_tf_svmr_n0_1$results[best_b_tf_svmr_n0_1[,4] == "*", 5]
+mod_b_ml_tf_svmr_n0_1_int_a <- mod_b_ml_tf_svmr_n0_1_acc - (1.645 * mod_b_ml_tf_svmr_n0_1_sd)
+mod_b_ml_tf_svmr_n0_1_int_b <- mod_b_ml_tf_svmr_n0_1_acc + (1.645 * mod_b_ml_tf_svmr_n0_1_sd)
+mod_b_ml_tf_svmr_n0_1_better <- ifelse(mod_b_ml_tf_svmr_n0_1_int_a > 0.5, '+', '-')
+
+Comp_n0_1_tf <- resamples(list(bayes = mod_b_ml_tf_bayes_n0_1,
+                                logit = mod_b_ml_tf_glm_n0_1,
+                                rf = mod_b_ml_tf_rf_n0_1,
+                                boost = mod_b_ml_tf_boost_n0_1,
+                                svm_lin = mod_b_ml_tf_svml_n0_1, 
+                                svm_poly = mod_b_ml_tf_svmp_n0_1, 
+                                svm_rad = mod_b_ml_tf_svmr_n0_1))
+
+bwplot(Comp_n0_1_tf, metric="Accuracy")  
+
+#Лаги ТФ-ИДФ 
+set.seed(1234) #логит
+mod_b_ml_tf_glm_n1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,4:50],  method = "glmnet", trControl = Control)
+best_b_tf_glm_n1_5 <- print.train(mod_b_ml_tf_glm_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_glm_n_1_5 <- mod_b_ml_tf_glm_n1_5$resample$Accuracy
+mod_b_ml_tf_glm_n1_5_acc <- mod_b_ml_tf_glm_n1_5$results[best_b_tf_glm_n1_5[,5] == "*", 3]
+mod_b_ml_tf_glm_n1_5_sd <- mod_b_ml_tf_glm_n1_5$results[best_b_tf_glm_n1_5[,5] == "*", 5]
+mod_b_ml_tf_glm_n1_5_int_a <- mod_b_ml_tf_glm_n1_5_acc - (1.645 * mod_b_ml_tf_glm_n1_5_sd)
+mod_b_ml_tf_glm_n1_5_int_b <- mod_b_ml_tf_glm_n1_5_acc + (1.645 * mod_b_ml_tf_glm_n1_5_sd)
+mod_b_ml_tf_glm_n1_5_better <- ifelse(mod_b_ml_tf_glm_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_tf_rf_n1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,4:50],  method = "rf", trControl = Control)
+best_b_tf_rf_n1_5 <-print.train(mod_b_ml_tf_rf_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_rf_n_1_5 <- mod_b_ml_tf_rf_n1_5$resample$Accuracy
+mod_b_ml_tf_rf_n1_5_acc <- mod_b_ml_tf_rf_n1_5$results[best_b_tf_rf_n1_5[,4] == "*", 2]
+mod_b_ml_tf_rf_n1_5_sd <- mod_b_ml_tf_rf_n1_5$results[best_b_tf_rf_n1_5[,4] == "*", 4]
+mod_b_ml_tf_rf_n1_5_int_a <- mod_b_ml_tf_rf_n1_5_acc - (1.645 * mod_b_ml_tf_rf_n1_5_sd)
+mod_b_ml_tf_rf_n1_5_int_b <- mod_b_ml_tf_rf_n1_5_acc + (1.645 * mod_b_ml_tf_rf_n1_5_sd)
+mod_b_ml_tf_rf_n1_5_better <- ifelse(mod_b_ml_tf_rf_n1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_tf_bayes_n1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,4:50],  method = "naive_bayes", trControl = Control)
+best_b_tf_bayes_n1_5 <- print.train(mod_b_ml_tf_bayes_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_bayes_n_1_5 <- mod_b_ml_tf_bayes_n1_5$resample$Accuracy
+mod_b_ml_tf_bayes_n1_5_acc <- mod_b_ml_tf_bayes_n1_5$results[best_b_tf_bayes_n1_5[,4] == "*", 4]
+mod_b_ml_tf_bayes_n1_5_sd <- mod_b_ml_tf_bayes_n1_5$results[best_b_tf_bayes_n1_5[,4] == "*", 6]
+mod_b_ml_tf_bayes_n1_5_int_a <- mod_b_ml_tf_bayes_n1_5_acc - (1.645 * mod_b_ml_tf_bayes_n1_5_sd)
+mod_b_ml_tf_bayes_n1_5_int_b <- mod_b_ml_tf_bayes_n1_5_acc + (1.645 * mod_b_ml_tf_bayes_n1_5_sd)
+mod_b_ml_tf_bayes_n1_5_better <- ifelse(mod_b_ml_tf_bayes_n1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_tf_boost_n1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,4:50],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_tf_boost_n1_5 <- print.train(mod_b_ml_tf_boost_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_boost_n_1_5 <- mod_b_ml_tf_boost_n1_5$resample$Accuracy
+mod_b_ml_tf_boost_n1_5_acc <- mod_b_ml_tf_boost_n1_5$results[best_b_tf_boost_n1_5[,5] == "*", 5]
+mod_b_ml_tf_boost_n1_5_sd <- mod_b_ml_tf_boost_n1_5$results[best_b_tf_boost_n1_5[,5] == "*", 7]
+mod_b_ml_tf_boost_n1_5_int_a <- mod_b_ml_tf_boost_n1_5_acc - (1.645 * mod_b_ml_tf_boost_n1_5_sd)
+mod_b_ml_tf_boost_n1_5_int_b <- mod_b_ml_tf_boost_n1_5_acc + (1.645 * mod_b_ml_tf_boost_n1_5_sd)
+mod_b_ml_tf_boost_n1_5_better <- ifelse(mod_b_ml_tf_boost_n1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_tf_svml_n1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,4:50],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_tf_svml_n1_5 <- print.train(mod_b_ml_tf_svml_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svml_n_1_5 <- mod_b_ml_tf_svml_n1_5$resample$Accuracy
+mod_b_ml_tf_svml_n1_5_acc <- mod_b_ml_tf_svml_n1_5$results$Accuracy
+mod_b_ml_tf_svml_n1_5_sd <- mod_b_ml_tf_svml_n1_5$results$AccuracySD
+mod_b_ml_tf_svml_n1_5_int_a <- mod_b_ml_tf_svml_n1_5_acc - (1.645 * mod_b_ml_tf_svml_n1_5_sd)
+mod_b_ml_tf_svml_n1_5_int_b <- mod_b_ml_tf_svml_n1_5_acc + (1.645 * mod_b_ml_tf_svml_n1_5_sd)
+mod_b_ml_tf_svml_n1_5_better <- ifelse(mod_b_ml_tf_svml_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmp_n1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,4:50],  method = "svmPoly", 
+                                tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_tf_svmp_n1_5 <- print.train(mod_b_ml_tf_svmp_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmp_n_1_5 <- mod_b_ml_tf_svmp_n1_5$resample$Accuracy
+mod_b_ml_tf_svmp_n1_5_acc <- mod_b_ml_tf_svmp_n1_5$results[best_b_tf_svmp_n1_5[,6] == "*", 4]
+mod_b_ml_tf_svmp_n1_5_sd <- mod_b_ml_tf_svmp_n1_5$results[best_b_tf_svmp_n1_5[,6] == "*", 6]
+mod_b_ml_tf_svmp_n1_5_int_a <- mod_b_ml_tf_svmp_n1_5_acc - (1.645 * mod_b_ml_tf_svmp_n1_5_sd)
+mod_b_ml_tf_svmp_n1_5_int_b <- mod_b_ml_tf_svmp_n1_5_acc + (1.645 * mod_b_ml_tf_svmp_n1_5_sd)
+mod_b_ml_tf_svmp_n1_5_better <- ifelse(mod_b_ml_tf_svmp_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmr_n1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,4:50],  method = "svmRadial", 
+                                tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_tf_svmr_n1_5 <- print.train(mod_b_ml_tf_svmr_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmr_n_1_5 <- mod_b_ml_tf_svmr_n1_5$resample$Accuracy
+mod_b_ml_tf_svmr_n1_5_acc <- mod_b_ml_tf_svmr_n1_5$results[best_b_tf_svmr_n1_5[,4] == "*", 3]
+mod_b_ml_tf_svmr_n1_5_sd <- mod_b_ml_tf_svmr_n1_5$results[best_b_tf_svmr_n1_5[,4] == "*", 5]
+mod_b_ml_tf_svmr_n1_5_int_a <- mod_b_ml_tf_svmr_n1_5_acc - (1.645 * mod_b_ml_tf_svmr_n1_5_sd)
+mod_b_ml_tf_svmr_n1_5_int_b <- mod_b_ml_tf_svmr_n1_5_acc + (1.645 * mod_b_ml_tf_svmr_n1_5_sd)
+mod_b_ml_tf_svmr_n1_5_better <- ifelse(mod_b_ml_tf_svmr_n1_5_int_a > 0.5, '+', '-')
+
+Comp_n1_5_tf <- resamples(list(bayes = mod_b_ml_tf_bayes_n1_5,
+                                logit = mod_b_ml_tf_glm_n1_5,
+                                rf = mod_b_ml_tf_rf_n1_5,
+                                boost = mod_b_ml_tf_boost_n1_5,
+                                svm_lin = mod_b_ml_tf_svml_n1_5, 
+                                svm_poly = mod_b_ml_tf_svmp_n1_5, 
+                                svm_rad = mod_b_ml_tf_svmr_n1_5))
+
+bwplot(Comp_n1_5_tf, metric="Accuracy") 
+
+#Финансы + текущие ТФ-ИДФ 
+set.seed(1234) #логит
+mod_b_ml_tf_glm_all0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "glmnet", trControl = Control)
+best_b_tf_glm_all0_1 <- print.train(mod_b_ml_tf_glm_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_glm_all_0_1 <- mod_b_ml_tf_glm_all0_1$resample$Accuracy
+mod_b_ml_tf_glm_all0_1_acc <- mod_b_ml_tf_glm_all0_1$results[best_b_tf_glm_all0_1[,5] == "*", 3]
+mod_b_ml_tf_glm_all0_1_sd <- mod_b_ml_tf_glm_all0_1$results[best_b_tf_glm_all0_1[,5] == "*", 5]
+mod_b_ml_tf_glm_all0_1_int_a <- mod_b_ml_tf_glm_all0_1_acc - (1.645 * mod_b_ml_tf_glm_all0_1_sd)
+mod_b_ml_tf_glm_all0_1_int_b <- mod_b_ml_tf_glm_all0_1_acc + (1.645 * mod_b_ml_tf_glm_all0_1_sd)
+mod_b_ml_tf_glm_all0_1_better <- ifelse(mod_b_ml_tf_glm_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_tf_rf_all0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "rf", trControl = Control)
+best_b_tf_rf_all0_1 <-print.train(mod_b_ml_tf_rf_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_rf_all_0_1 <- mod_b_ml_tf_rf_all0_1$resample$Accuracy
+mod_b_ml_tf_rf_all0_1_acc <- mod_b_ml_tf_rf_all0_1$results[best_b_tf_rf_all0_1[,4] == "*", 2]
+mod_b_ml_tf_rf_all0_1_sd <- mod_b_ml_tf_rf_all0_1$results[best_b_tf_rf_all0_1[,4] == "*", 4]
+mod_b_ml_tf_rf_all0_1_int_a <- mod_b_ml_tf_rf_all0_1_acc - (1.645 * mod_b_ml_tf_rf_all0_1_sd)
+mod_b_ml_tf_rf_all0_1_int_b <- mod_b_ml_tf_rf_all0_1_acc + (1.645 * mod_b_ml_tf_rf_all0_1_sd)
+mod_b_ml_tf_rf_all0_1_better <- ifelse(mod_b_ml_tf_rf_all0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_tf_bayes_all0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "naive_bayes", trControl = Control)
+best_b_tf_bayes_all0_1 <- print.train(mod_b_ml_tf_bayes_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_bayes_all_0_1 <- mod_b_ml_tf_bayes_all0_1$resample$Accuracy
+mod_b_ml_tf_bayes_all0_1_acc <- mod_b_ml_tf_bayes_all0_1$results[best_b_tf_bayes_all0_1[,4] == "*", 4]
+mod_b_ml_tf_bayes_all0_1_sd <- mod_b_ml_tf_bayes_all0_1$results[best_b_tf_bayes_all0_1[,4] == "*", 6]
+mod_b_ml_tf_bayes_all0_1_int_a <- mod_b_ml_tf_bayes_all0_1_acc - (1.645 * mod_b_ml_tf_bayes_all0_1_sd)
+mod_b_ml_tf_bayes_all0_1_int_b <- mod_b_ml_tf_bayes_all0_1_acc + (1.645 * mod_b_ml_tf_bayes_all0_1_sd)
+mod_b_ml_tf_bayes_all0_1_better <- ifelse(mod_b_ml_tf_bayes_all0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_tf_boost_all0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_tf_boost_all0_1 <- print.train(mod_b_ml_tf_boost_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_boost_all_0_1 <- mod_b_ml_tf_boost_all0_1$resample$Accuracy
+mod_b_ml_tf_boost_all0_1_acc <- mod_b_ml_tf_boost_all0_1$results[best_b_tf_boost_all0_1[,5] == "*", 5]
+mod_b_ml_tf_boost_all0_1_sd <- mod_b_ml_tf_boost_all0_1$results[best_b_tf_boost_all0_1[,5] == "*", 7]
+mod_b_ml_tf_boost_all0_1_int_a <- mod_b_ml_tf_boost_all0_1_acc - (1.645 * mod_b_ml_tf_boost_all0_1_sd)
+mod_b_ml_tf_boost_all0_1_int_b <- mod_b_ml_tf_boost_all0_1_acc + (1.645 * mod_b_ml_tf_boost_all0_1_sd)
+mod_b_ml_tf_boost_all0_1_better <- ifelse(mod_b_ml_tf_boost_all0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_tf_svml_all0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_tf_svml_all0_1 <- print.train(mod_b_ml_tf_svml_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svml_all_0_1 <- mod_b_ml_tf_svml_all0_1$resample$Accuracy
+mod_b_ml_tf_svml_all0_1_acc <- mod_b_ml_tf_svml_all0_1$results$Accuracy
+mod_b_ml_tf_svml_all0_1_sd <- mod_b_ml_tf_svml_all0_1$results$AccuracySD
+mod_b_ml_tf_svml_all0_1_int_a <- mod_b_ml_tf_svml_all0_1_acc - (1.645 * mod_b_ml_tf_svml_all0_1_sd)
+mod_b_ml_tf_svml_all0_1_int_b <- mod_b_ml_tf_svml_all0_1_acc + (1.645 * mod_b_ml_tf_svml_all0_1_sd)
+mod_b_ml_tf_svml_all0_1_better <- ifelse(mod_b_ml_tf_svml_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmp_all0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "svmPoly", 
+                                  tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_tf_svmp_all0_1 <- print.train(mod_b_ml_tf_svmp_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmp_all_0_1 <- mod_b_ml_tf_svmp_all0_1$resample$Accuracy
+mod_b_ml_tf_svmp_all0_1_acc <- mod_b_ml_tf_svmp_all0_1$results[best_b_tf_svmp_all0_1[,6] == "*", 4]
+mod_b_ml_tf_svmp_all0_1_sd <- mod_b_ml_tf_svmp_all0_1$results[best_b_tf_svmp_all0_1[,6] == "*", 6]
+mod_b_ml_tf_svmp_all0_1_int_a <- mod_b_ml_tf_svmp_all0_1_acc - (1.645 * mod_b_ml_tf_svmp_all0_1_sd)
+mod_b_ml_tf_svmp_all0_1_int_b <- mod_b_ml_tf_svmp_all0_1_acc + (1.645 * mod_b_ml_tf_svmp_all0_1_sd)
+mod_b_ml_tf_svmp_all0_1_better <- ifelse(mod_b_ml_tf_svmp_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmr_all0_1 <- train(y = toyota_tf_ok_mod$big, x = toyota_tf_ok_mod[,c(4:50, 51:52)],  method = "svmRadial", 
+                                  tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_tf_svmr_all0_1 <- print.train(mod_b_ml_tf_svmr_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmr_all_0_1 <- mod_b_ml_tf_svmr_all0_1$resample$Accuracy
+mod_b_ml_tf_svmr_all0_1_acc <- mod_b_ml_tf_svmr_all0_1$results[best_b_tf_svmr_all0_1[,4] == "*", 3]
+mod_b_ml_tf_svmr_all0_1_sd <- mod_b_ml_tf_svmr_all0_1$results[best_b_tf_svmr_all0_1[,4] == "*", 5]
+mod_b_ml_tf_svmr_all0_1_int_a <- mod_b_ml_tf_svmr_all0_1_acc - (1.645 * mod_b_ml_tf_svmr_all0_1_sd)
+mod_b_ml_tf_svmr_all0_1_int_b <- mod_b_ml_tf_svmr_all0_1_acc + (1.645 * mod_b_ml_tf_svmr_all0_1_sd)
+mod_b_ml_tf_svmr_all0_1_better <- ifelse(mod_b_ml_tf_svmr_all0_1_int_a > 0.5, '+', '-')
+
+Comp_all0_1_tf <- resamples(list(bayes = mod_b_ml_tf_bayes_all0_1,
+                                  logit = mod_b_ml_tf_glm_all0_1,
+                                  rf = mod_b_ml_tf_rf_all0_1,
+                                  boost = mod_b_ml_tf_boost_all0_1,
+                                  svm_lin = mod_b_ml_tf_svml_all0_1, 
+                                  svm_poly = mod_b_ml_tf_svmp_all0_1, 
+                                  svm_rad = mod_b_ml_tf_svmr_all0_1))
+
+bwplot(Comp_all0_1_tf, metric="Accuracy")
+
+#Финансы + Лаги ТФ-ИДФ 
+set.seed(1234) #логит
+mod_b_ml_tf_glm_all1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "glmnet", trControl = Control)
+best_b_tf_glm_all1_5 <- print.train(mod_b_ml_tf_glm_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_glm_all_1_5 <- mod_b_ml_tf_glm_all1_5$resample$Accuracy
+mod_b_ml_tf_glm_all1_5_acc <- mod_b_ml_tf_glm_all1_5$results[best_b_tf_glm_all1_5[,5] == "*", 3]
+mod_b_ml_tf_glm_all1_5_sd <- mod_b_ml_tf_glm_all1_5$results[best_b_tf_glm_all1_5[,5] == "*", 5]
+mod_b_ml_tf_glm_all1_5_int_a <- mod_b_ml_tf_glm_all1_5_acc - (1.645 * mod_b_ml_tf_glm_all1_5_sd)
+mod_b_ml_tf_glm_all1_5_int_b <- mod_b_ml_tf_glm_all1_5_acc + (1.645 * mod_b_ml_tf_glm_all1_5_sd)
+mod_b_ml_tf_glm_all1_5_better <- ifelse(mod_b_ml_tf_glm_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_tf_rf_all1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "rf", trControl = Control)
+best_b_tf_rf_all1_5 <-print.train(mod_b_ml_tf_rf_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_rf_all_1_5 <- mod_b_ml_tf_rf_all1_5$resample$Accuracy
+mod_b_ml_tf_rf_all1_5_acc <- mod_b_ml_tf_rf_all1_5$results[best_b_tf_rf_all1_5[,4] == "*", 2]
+mod_b_ml_tf_rf_all1_5_sd <- mod_b_ml_tf_rf_all1_5$results[best_b_tf_rf_all1_5[,4] == "*", 4]
+mod_b_ml_tf_rf_all1_5_int_a <- mod_b_ml_tf_rf_all1_5_acc - (1.645 * mod_b_ml_tf_rf_all1_5_sd)
+mod_b_ml_tf_rf_all1_5_int_b <- mod_b_ml_tf_rf_all1_5_acc + (1.645 * mod_b_ml_tf_rf_all1_5_sd)
+mod_b_ml_tf_rf_all1_5_better <- ifelse(mod_b_ml_tf_rf_all1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_tf_bayes_all1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "naive_bayes", trControl = Control)
+best_b_tf_bayes_all1_5 <- print.train(mod_b_ml_tf_bayes_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_bayes_all_1_5 <- mod_b_ml_tf_bayes_all1_5$resample$Accuracy
+mod_b_ml_tf_bayes_all1_5_acc <- mod_b_ml_tf_bayes_all1_5$results[best_b_tf_bayes_all1_5[,4] == "*", 4]
+mod_b_ml_tf_bayes_all1_5_sd <- mod_b_ml_tf_bayes_all1_5$results[best_b_tf_bayes_all1_5[,4] == "*", 6]
+mod_b_ml_tf_bayes_all1_5_int_a <- mod_b_ml_tf_bayes_all1_5_acc - (1.645 * mod_b_ml_tf_bayes_all1_5_sd)
+mod_b_ml_tf_bayes_all1_5_int_b <- mod_b_ml_tf_bayes_all1_5_acc + (1.645 * mod_b_ml_tf_bayes_all1_5_sd)
+mod_b_ml_tf_bayes_all1_5_better <- ifelse(mod_b_ml_tf_bayes_all1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_tf_boost_all1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_tf_boost_all1_5 <- print.train(mod_b_ml_tf_boost_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_boost_all_1_5 <- mod_b_ml_tf_boost_all1_5$resample$Accuracy
+mod_b_ml_tf_boost_all1_5_acc <- mod_b_ml_tf_boost_all1_5$results[best_b_tf_boost_all1_5[,5] == "*", 5]
+mod_b_ml_tf_boost_all1_5_sd <- mod_b_ml_tf_boost_all1_5$results[best_b_tf_boost_all1_5[,5] == "*", 7]
+mod_b_ml_tf_boost_all1_5_int_a <- mod_b_ml_tf_boost_all1_5_acc - (1.645 * mod_b_ml_tf_boost_all1_5_sd)
+mod_b_ml_tf_boost_all1_5_int_b <- mod_b_ml_tf_boost_all1_5_acc + (1.645 * mod_b_ml_tf_boost_all1_5_sd)
+mod_b_ml_tf_boost_all1_5_better <- ifelse(mod_b_ml_tf_boost_all1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_tf_svml_all1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_tf_svml_all1_5 <- print.train(mod_b_ml_tf_svml_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svml_all_1_5 <- mod_b_ml_tf_svml_all1_5$resample$Accuracy
+mod_b_ml_tf_svml_all1_5_acc <- mod_b_ml_tf_svml_all1_5$results$Accuracy
+mod_b_ml_tf_svml_all1_5_sd <- mod_b_ml_tf_svml_all1_5$results$AccuracySD
+mod_b_ml_tf_svml_all1_5_int_a <- mod_b_ml_tf_svml_all1_5_acc - (1.645 * mod_b_ml_tf_svml_all1_5_sd)
+mod_b_ml_tf_svml_all1_5_int_b <- mod_b_ml_tf_svml_all1_5_acc + (1.645 * mod_b_ml_tf_svml_all1_5_sd)
+mod_b_ml_tf_svml_all1_5_better <- ifelse(mod_b_ml_tf_svml_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmp_all1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "svmPoly", 
+                                  tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_tf_svmp_all1_5 <- print.train(mod_b_ml_tf_svmp_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmp_all_1_5 <- mod_b_ml_tf_svmp_all1_5$resample$Accuracy
+mod_b_ml_tf_svmp_all1_5_acc <- mod_b_ml_tf_svmp_all1_5$results[best_b_tf_svmp_all1_5[,6] == "*", 4]
+mod_b_ml_tf_svmp_all1_5_sd <- mod_b_ml_tf_svmp_all1_5$results[best_b_tf_svmp_all1_5[,6] == "*", 6]
+mod_b_ml_tf_svmp_all1_5_int_a <- mod_b_ml_tf_svmp_all1_5_acc - (1.645 * mod_b_ml_tf_svmp_all1_5_sd)
+mod_b_ml_tf_svmp_all1_5_int_b <- mod_b_ml_tf_svmp_all1_5_acc + (1.645 * mod_b_ml_tf_svmp_all1_5_sd)
+mod_b_ml_tf_svmp_all1_5_better <- ifelse(mod_b_ml_tf_svmp_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_tf_svmr_all1_5 <- train(y = toyota_tf_ok_mod_1$big, x = toyota_tf_ok_mod_1[,c(4:50, 51:52)],  method = "svmRadial", 
+                                  tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_tf_svmr_all1_5 <- print.train(mod_b_ml_tf_svmr_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+tf_toyota_b_svmr_all_1_5 <- mod_b_ml_tf_svmr_all1_5$resample$Accuracy
+mod_b_ml_tf_svmr_all1_5_acc <- mod_b_ml_tf_svmr_all1_5$results[best_b_tf_svmr_all1_5[,4] == "*", 3]
+mod_b_ml_tf_svmr_all1_5_sd <- mod_b_ml_tf_svmr_all1_5$results[best_b_tf_svmr_all1_5[,4] == "*", 5]
+mod_b_ml_tf_svmr_all1_5_int_a <- mod_b_ml_tf_svmr_all1_5_acc - (1.645 * mod_b_ml_tf_svmr_all1_5_sd)
+mod_b_ml_tf_svmr_all1_5_int_b <- mod_b_ml_tf_svmr_all1_5_acc + (1.645 * mod_b_ml_tf_svmr_all1_5_sd)
+mod_b_ml_tf_svmr_all1_5_better <- ifelse(mod_b_ml_tf_svmr_all1_5_int_a > 0.5, '+', '-')
+
+Comp_all1_5_tf <- resamples(list(bayes = mod_b_ml_tf_bayes_all1_5,
+                                  logit = mod_b_ml_tf_glm_all1_5,
+                                  rf = mod_b_ml_tf_rf_all1_5,
+                                  boost = mod_b_ml_tf_boost_all1_5,
+                                  svm_lin = mod_b_ml_tf_svml_all1_5, 
+                                  svm_poly = mod_b_ml_tf_svmp_all1_5, 
+                                  svm_rad = mod_b_ml_tf_svmr_all1_5))
+
+bwplot(Comp_all1_5_tf, metric="Accuracy")
+
+#Таблица для этого всего 
+ml_accuracy_b_tf <- c(mod_b_ml_tf_glm_fin_acc, mod_b_ml_tf_rf_fin_acc, mod_b_ml_tf_bayes_fin_acc, 
+                       mod_b_ml_tf_boost_fin_acc, mod_b_ml_tf_svml_fin_acc, mod_b_ml_tf_svmp_fin_acc, mod_b_ml_tf_svmr_fin_acc, 
+                       mod_b_ml_tf_glm_n0_1_acc, mod_b_ml_tf_rf_n0_1_acc, mod_b_ml_tf_bayes_n0_1_acc, 
+                       mod_b_ml_tf_boost_n0_1_acc, mod_b_ml_tf_svml_n0_1_acc, mod_b_ml_tf_svmp_n0_1_acc, mod_b_ml_tf_svmr_n0_1_acc,
+                       mod_b_ml_tf_glm_n1_5_acc, mod_b_ml_tf_rf_n1_5_acc, mod_b_ml_tf_bayes_n1_5_acc, 
+                       mod_b_ml_tf_boost_n1_5_acc, mod_b_ml_tf_svml_n1_5_acc, mod_b_ml_tf_svmp_n1_5_acc, mod_b_ml_tf_svmr_n1_5_acc,
+                       mod_b_ml_tf_glm_all0_1_acc, mod_b_ml_tf_rf_all0_1_acc, mod_b_ml_tf_bayes_all0_1_acc, 
+                       mod_b_ml_tf_boost_all0_1_acc, mod_b_ml_tf_svml_all0_1_acc, mod_b_ml_tf_svmp_all0_1_acc, mod_b_ml_tf_svmr_all0_1_acc, 
+                       mod_b_ml_tf_glm_all1_5_acc, mod_b_ml_tf_rf_all1_5_acc, mod_b_ml_tf_bayes_all1_5_acc, 
+                       mod_b_ml_tf_boost_all1_5_acc, mod_b_ml_tf_svml_all1_5_acc, mod_b_ml_tf_svmp_all1_5_acc, mod_b_ml_tf_svmr_all1_5_acc)
+
+ml_sd_a_b_tf <- c(mod_b_ml_tf_glm_fin_int_a, mod_b_ml_tf_rf_fin_int_a, mod_b_ml_tf_bayes_fin_int_a, 
+                   mod_b_ml_tf_boost_fin_int_a, mod_b_ml_tf_svml_fin_int_a, mod_b_ml_tf_svmp_fin_int_a, mod_b_ml_tf_svmr_fin_int_a, 
+                   mod_b_ml_tf_glm_n0_1_int_a, mod_b_ml_tf_rf_n0_1_int_a, mod_b_ml_tf_bayes_n0_1_int_a, 
+                   mod_b_ml_tf_boost_n0_1_int_a, mod_b_ml_tf_svml_n0_1_int_a, mod_b_ml_tf_svmp_n0_1_int_a, mod_b_ml_tf_svmr_n0_1_int_a,
+                   mod_b_ml_tf_glm_n1_5_int_a, mod_b_ml_tf_rf_n1_5_int_a, mod_b_ml_tf_bayes_n1_5_int_a, 
+                   mod_b_ml_tf_boost_n1_5_int_a, mod_b_ml_tf_svml_n1_5_int_a, mod_b_ml_tf_svmp_n1_5_int_a, mod_b_ml_tf_svmr_n1_5_int_a,
+                   mod_b_ml_tf_glm_all0_1_int_a, mod_b_ml_tf_rf_all0_1_int_a, mod_b_ml_tf_bayes_all0_1_int_a, 
+                   mod_b_ml_tf_boost_all0_1_int_a, mod_b_ml_tf_svml_all0_1_int_a, mod_b_ml_tf_svmp_all0_1_int_a, mod_b_ml_tf_svmr_all0_1_int_a, 
+                   mod_b_ml_tf_glm_all1_5_int_a, mod_b_ml_tf_rf_all1_5_int_a, mod_b_ml_tf_bayes_all1_5_int_a, 
+                   mod_b_ml_tf_boost_all1_5_int_a, mod_b_ml_tf_svml_all1_5_int_a, mod_b_ml_tf_svmp_all1_5_int_a, mod_b_ml_tf_svmr_all1_5_int_a)
+
+ml_sd_b_b_tf <- c(mod_b_ml_tf_glm_fin_int_b, mod_b_ml_tf_rf_fin_int_b, mod_b_ml_tf_bayes_fin_int_b, 
+                   mod_b_ml_tf_boost_fin_int_b, mod_b_ml_tf_svml_fin_int_b, mod_b_ml_tf_svmp_fin_int_b, mod_b_ml_tf_svmr_fin_int_b, 
+                   mod_b_ml_tf_glm_n0_1_int_b, mod_b_ml_tf_rf_n0_1_int_b, mod_b_ml_tf_bayes_n0_1_int_b, 
+                   mod_b_ml_tf_boost_n0_1_int_b, mod_b_ml_tf_svml_n0_1_int_b, mod_b_ml_tf_svmp_n0_1_int_b, mod_b_ml_tf_svmr_n0_1_int_b,
+                   mod_b_ml_tf_glm_n1_5_int_b, mod_b_ml_tf_rf_n1_5_int_b, mod_b_ml_tf_bayes_n1_5_int_b, 
+                   mod_b_ml_tf_boost_n1_5_int_b, mod_b_ml_tf_svml_n1_5_int_b, mod_b_ml_tf_svmp_n1_5_int_b, mod_b_ml_tf_svmr_n1_5_int_b,
+                   mod_b_ml_tf_glm_all0_1_int_b, mod_b_ml_tf_rf_all0_1_int_b, mod_b_ml_tf_bayes_all0_1_int_b, 
+                   mod_b_ml_tf_boost_all0_1_int_b, mod_b_ml_tf_svml_all0_1_int_b, mod_b_ml_tf_svmp_all0_1_int_b, mod_b_ml_tf_svmr_all0_1_int_b, 
+                   mod_b_ml_tf_glm_all1_5_int_b, mod_b_ml_tf_rf_all1_5_int_b, mod_b_ml_tf_bayes_all1_5_int_b, 
+                   mod_b_ml_tf_boost_all1_5_int_b, mod_b_ml_tf_svml_all1_5_int_b, mod_b_ml_tf_svmp_all1_5_int_b, mod_b_ml_tf_svmr_all1_5_int_b)
+
+ml_better_b_tf <- c(mod_b_ml_tf_glm_fin_better, mod_b_ml_tf_rf_fin_better, mod_b_ml_tf_bayes_fin_better, 
+                     mod_b_ml_tf_boost_fin_better, mod_b_ml_tf_svml_fin_better, mod_b_ml_tf_svmp_fin_better, mod_b_ml_tf_svmr_fin_better, 
+                     mod_b_ml_tf_glm_n0_1_better, mod_b_ml_tf_rf_n0_1_better, mod_b_ml_tf_bayes_n0_1_better, 
+                     mod_b_ml_tf_boost_n0_1_better, mod_b_ml_tf_svml_n0_1_better, mod_b_ml_tf_svmp_n0_1_better, mod_b_ml_tf_svmr_n0_1_better,
+                     mod_b_ml_tf_glm_n1_5_better, mod_b_ml_tf_rf_n1_5_better, mod_b_ml_tf_bayes_n1_5_better, 
+                     mod_b_ml_tf_boost_n1_5_better, mod_b_ml_tf_svml_n1_5_better, mod_b_ml_tf_svmp_n1_5_better, mod_b_ml_tf_svmr_n1_5_better,
+                     mod_b_ml_tf_glm_all0_1_better, mod_b_ml_tf_rf_all0_1_better, mod_b_ml_tf_bayes_all0_1_better, 
+                     mod_b_ml_tf_boost_all0_1_better, mod_b_ml_tf_svml_all0_1_better, mod_b_ml_tf_svmp_all0_1_better, mod_b_ml_tf_svmr_all0_1_better, 
+                     mod_b_ml_tf_glm_all1_5_better, mod_b_ml_tf_rf_all1_5_better, mod_b_ml_tf_bayes_all1_5_better, 
+                     mod_b_ml_tf_boost_all1_5_better, mod_b_ml_tf_svml_all1_5_better, mod_b_ml_tf_svmp_all1_5_better, mod_b_ml_tf_svmr_all1_5_better)
+
+ml_type_tf <- c('Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial', 
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+                 'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial')
+
+table_ml_tf_b <- data.frame(ml_type_tf, ml_sd_a_b_tf, ml_sd_b_b_tf, ml_accuracy_b_tf, ml_better_b_tf)
+
+rownames(table_ml_tf_b)[1] <- 'Использование только финансовой нформации'
+rownames(table_ml_tf_b)[8] <- 'Использование только новостной информации (текущая)'
+rownames(table_ml_tf_b)[15] <- 'Использование лагированной новостной информации'
+rownames(table_ml_tf_b)[22] <- 'Оба канала информации (текущая)'
+rownames(table_ml_tf_b)[29] <- 'Оба канала информации (новости ланированные)'
+
+table_ml_tf_b$ml_sd_a_b_tf <- round(table_ml_tf_b$ml_sd_a_b_tf, 4)
+table_ml_tf_b$ml_sd_b_b_tf <- round(table_ml_tf_b$ml_sd_b_b_tf, 4)
+table_ml_tf_b$ml_accuracy_b_tf <- round(table_ml_tf_b$ml_accuracy_b_tf, 4)
+
+table_ml_tf_b
+
+#Выгрузим
+table_ml_tf_done_toyota_big <- table_ml_tf_b %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование методов машинного обучения для классификации больших доходностей на разных источниках данных с использованием словарей Дирихле")
+  ) 
+gtsave(table_ml_tf_done_toyota_big, filename = 'table_ml_tf_done_toyota_big.html')
