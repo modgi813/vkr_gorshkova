@@ -1,0 +1,1381 @@
+library(seededlda)
+library(lubridate)
+
+#### Выделяем словари в новостях о тесле ####
+#загрузим данные
+bmw_tok <- tokens(
+  bmw_news$message_ok, what = "word", remove_punct = TRUE, remove_symbols = TRUE, remove_numbers = TRUE,
+  remove_url = TRUE, remove_separators = TRUE, split_hyphens = FALSE, split_tags = FALSE,
+  include_docvars = TRUE, padding = FALSE, verbose = quanteda_options("verbose")) %>%
+  tokens_remove(pattern = quanteda::stopwords("ru", source = "snowball")) %>%
+  tokens_remove(pattern = quanteda::stopwords("ru", source = "stopwords-iso")) %>% 
+  tokens_remove(pattern = quanteda::stopwords("ru", source = "marimo")) %>%
+  tokens_remove(pattern = quanteda::stopwords("ru", source = "nltk")) %>%
+  tokens_tolower()
+
+#превратим в DFM
+bmw_tok <- tokens_remove(bmw_tok, pattern = c(stopwords("ru"), "*-time", "updated-*", 
+                                                  "gmt", "bst"))
+bmw_esche_tok <- tokens_wordstem(bmw_tok, language = "ru")
+dfmat_news_bmw <- dfm(bmw_esche_tok) %>% 
+  dfm_trim(min_termfreq = 0.8, termfreq_type = "quantile",
+           max_docfreq = 0.1, docfreq_type = "prop")
+
+#LDA (работает долго)
+tmod_lda <- textmodel_lda(dfmat_news_bmw, k = 10)
+#что входит в каждый топик?
+terms(tmod_lda, 10)
+
+#из какого топика скорее какой документ
+head(topics(tmod_lda), 20)
+
+#сколько раз какой топик встречается как самый вероятный
+dfmat_news_bmw$topic <- topics(tmod_lda)
+table(dfmat_news_bmw$topic)
+
+#по топикам
+head(tmod_lda$theta)
+topics_bmw <- tmod_lda$theta
+
+#Прицепили это к изначальному датасету - теперь есть пара новость и то, вероятности по топикам 
+bmw_dir <- cbind(bmw_news, topics_bmw)
+bmw_dir <- bmw_dir[, c(3, 5:14)]
+head(bmw_dir)
+
+#### Что-то из скрипта - типа предобработка ####
+
+bmw_dir_ok <- bmw_dir %>% group_by(Date) %>% 
+  summarise(topik_1 = mean(topic1), 
+            topik_2 = mean(topic2), 
+            topik_3 = mean(topic3), 
+            topik_4 = mean(topic4), 
+            topik_5 = mean(topic5), 
+            topik_6 = mean(topic6), 
+            topik_7 = mean(topic7), 
+            topik_8 = mean(topic8), 
+            topik_9 = mean(topic9),
+            topik_10 = mean(topic10),
+            .groups = 'drop') %>%
+  as.data.frame()
+
+bmw_dir_ok <- left_join(bmw_ok, bmw_dir_ok, by = "Date")
+head(bmw_dir_ok)
+
+ggplot(bmw_dir_ok, aes(x=Date)) + 
+  geom_line(aes(y = topik_1), color = "red") + 
+  geom_line(aes(y = topik_2), color="blue") + 
+  geom_line(aes(y = topik_3), color="pink") + 
+  geom_line(aes(y = topik_4), color="orange") + 
+  geom_line(aes(y = topik_5), color="green") + 
+  geom_line(aes(y = topik_6), color="brown") + 
+  geom_line(aes(y = topik_7), color="yellow") + 
+  geom_line(aes(y = topik_8), color="orange") + 
+  geom_line(aes(y = topik_9), color="purple") + 
+  geom_line(aes(y = topik_10), color="black") 
+
+#### Лаги скучные ####
+bmw_dir_ok$topik_1_1 <- lag(bmw_dir_ok$topik_1, 1)
+bmw_dir_ok$topik_1_2 <- lag(bmw_dir_ok$topik_1, 2)
+bmw_dir_ok$topik_1_3 <- lag(bmw_dir_ok$topik_1, 3)
+
+bmw_dir_ok$topik_2_1 <- lag(bmw_dir_ok$topik_2, 1)
+bmw_dir_ok$topik_2_2 <- lag(bmw_dir_ok$topik_2, 2)
+bmw_dir_ok$topik_2_3 <- lag(bmw_dir_ok$topik_2, 3)
+
+bmw_dir_ok$topik_3_1 <- lag(bmw_dir_ok$topik_3, 1)
+bmw_dir_ok$topik_3_2 <- lag(bmw_dir_ok$topik_3, 2)
+bmw_dir_ok$topik_3_3 <- lag(bmw_dir_ok$topik_3, 3)
+
+bmw_dir_ok$topik_4_1 <- lag(bmw_dir_ok$topik_4, 1)
+bmw_dir_ok$topik_4_2 <- lag(bmw_dir_ok$topik_4, 2)
+bmw_dir_ok$topik_4_3 <- lag(bmw_dir_ok$topik_4, 3)
+
+bmw_dir_ok$topik_5_1 <- lag(bmw_dir_ok$topik_5, 1)
+bmw_dir_ok$topik_5_2 <- lag(bmw_dir_ok$topik_5, 2)
+bmw_dir_ok$topik_5_3 <- lag(bmw_dir_ok$topik_5, 3)
+
+bmw_dir_ok$topik_6_1 <- lag(bmw_dir_ok$topik_6, 1)
+bmw_dir_ok$topik_6_2 <- lag(bmw_dir_ok$topik_6, 2)
+bmw_dir_ok$topik_6_3 <- lag(bmw_dir_ok$topik_6, 3)
+
+bmw_dir_ok$topik_7_1 <- lag(bmw_dir_ok$topik_7, 1)
+bmw_dir_ok$topik_7_2 <- lag(bmw_dir_ok$topik_7, 2)
+bmw_dir_ok$topik_7_3 <- lag(bmw_dir_ok$topik_7, 3)
+
+bmw_dir_ok$topik_8_1 <- lag(bmw_dir_ok$topik_8, 1)
+bmw_dir_ok$topik_8_2 <- lag(bmw_dir_ok$topik_8, 2)
+bmw_dir_ok$topik_8_3 <- lag(bmw_dir_ok$topik_8, 3)
+
+bmw_dir_ok$topik_9_1 <- lag(bmw_dir_ok$topik_9, 1)
+bmw_dir_ok$topik_9_2 <- lag(bmw_dir_ok$topik_9, 2)
+bmw_dir_ok$topik_9_3 <- lag(bmw_dir_ok$topik_9, 3)
+
+bmw_dir_ok$topik_10_1 <- lag(bmw_dir_ok$topik_10, 1)
+bmw_dir_ok$topik_10_2 <- lag(bmw_dir_ok$topik_10, 2)
+bmw_dir_ok$topik_10_3 <- lag(bmw_dir_ok$topik_10, 3)
+
+bmw_dir_ok <- replace(bmw_dir_ok, is.na(bmw_dir_ok), 0)
+head(bmw_dir_ok)
+
+#### Линейные модели #####
+#Арима доведение до значимости 
+x_lag <-  bmw_dir_ok[,c(4:9, 11:43)]
+mod <- auto.arima(bmw_dir_ok$bmw_y_ok, xreg = as.matrix(x_lag[, c(23, 29, 30)]))
+summary(mod)
+
+#Собираем все в таблицу 
+mod_full_arima_dir <- unlist(mod$coef, recursive = TRUE, use.names = TRUE)
+sd_full_arima_dir <- unlist(sqrt(diag(mod$var.coef)), recursive = TRUE, use.names = TRUE) 
+table_bmw_full_arima_dir <- data.frame(mod_full_arima_dir, sd_full_arima_dir)
+
+#Итоговая таблица по всей Ариме 
+table_bmw_full_arima_dir$t_stat <- table_bmw_full_arima_dir$mod_full_arima_dir/table_bmw_full_arima_dir$sd_full_arima_dir
+table_bmw_full_arima_dir$t_stat <- round(table_bmw_full_arima_dir$t_stat, 5)
+table_bmw_full_arima_dir$pi_val <- round(pnorm(-abs(table_bmw_full_arima_dir$t_stat))*2, 5)
+colnames(table_bmw_full_arima_dir)[1] <- "estimate"
+colnames(table_bmw_full_arima_dir)[2] <- "sd"
+table_bmw_full_arima_dir <- round(table_bmw_full_arima_dir, 6)
+table_bmw_full_arima_dir
+
+#Это чтобы чистить Ариму дальше
+table_bmw_full_arima_to_del_dir <- table_bmw_full_arima_dir %>%  arrange(desc(abs(t_stat)))
+table_bmw_full_arima_to_del_dir
+
+
+#Значимая по топикам Арима 
+mod_1 <- Arima(bmw_dir_ok$bmw_y_ok, order = c(1,0,0), xreg = as.matrix(x_lag[, c(23, 29, 30)]))
+summary(mod_1)
+#Собираем все в таблицу 
+mod_ok_arima_dir <- unlist(mod_1$coef, recursive = TRUE, use.names = TRUE)
+sd_ok_arima_dir <- unlist(sqrt(diag(mod_1$var.coef)), recursive = TRUE, use.names = TRUE) 
+table_bmw_ok_arima_dir <- data.frame(mod_ok_arima_dir, sd_ok_arima_dir)
+
+#Итоговая таблица по значимой Ариме 
+table_bmw_ok_arima_dir$t_stat <- table_bmw_ok_arima_dir$mod_ok_arima_dir/table_bmw_ok_arima_dir$sd_ok_arima_dir
+table_bmw_ok_arima_dir$t_stat <- round(table_bmw_ok_arima_dir$t_stat, 5)
+table_bmw_ok_arima_dir$pi_val <- round(pnorm(-abs(table_bmw_ok_arima_dir$t_stat))*2, 5)
+colnames(table_bmw_ok_arima_dir)[1] <- "estimate"
+colnames(table_bmw_ok_arima_dir)[2] <- "sd"
+len <- length(table_bmw_ok_arima_dir$estimate)
+table_bmw_ok_arima_dir[(len+1),] <- mod_1$aic
+table_bmw_ok_arima_dir[(len+2),] <- mod_1$bic
+table_bmw_ok_arima_dir[(len+3),] <- mod_1$nobs
+table_bmw_ok_arima_dir <- round(table_bmw_ok_arima_dir, 6)
+table_bmw_ok_arima_dir
+
+#Выгрузим значимую Ариму 
+table_arima_dir_bmw <- table_bmw_ok_arima_dir %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Арима-модель для компании Феррари на словарях по Дирихле")
+  ) %>% 
+  fmt_number (
+    columns = everything(), 
+    rows = everything(), 
+    decimals = 6
+  )
+gtsave(table_arima_dir_bmw, filename = 'dir_arima_bmw.html')
+
+
+#Дальше делим на трейн и тест и строим предикты по Ариме - в выгрузку только кортест 
+train <- bmw_dir_ok[1:707,]
+test <- bmw_dir_ok[708:1016,]
+bmw_x_train_arima <-  train[,c(4:9, 11:43)]
+bmw_x_test_arima <-  test[,c(4:9, 11:43)]
+
+mod_1 <- Arima(train$bmw_y_ok, order = c(1, 0, 0),  xreg = as.matrix(bmw_x_train_arima[, c(23, 29, 30)]))
+summary(mod_1)
+A_1 <- predict(mod_1, newxreg = as.matrix(bmw_x_test_arima[, c(23, 29, 30)]))
+cor_pred_arima_dir <- cor.test(A_1$pred, test$bmw_y_ok)
+
+int_a_arima_dir <- cor_pred_arima_dir$conf.int[1]
+int_b_arima_dir <- cor_pred_arima_dir$conf.int[2]
+cor_arima_dir <- cor_pred_arima_dir$estimate
+pv_arima_dir <- cor_pred_arima_dir$p.value
+table_cortest_arima_dir <- data.frame(int_a_arima_dir, int_b_arima_dir, cor_arima_dir, pv_arima_dir)
+rownames(table_cortest_arima_dir)[1] <- 'bmw'
+table_cortest_arima_dir
+
+table_arima_bmw_pred_dir <- table_cortest_arima_dir %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Корреляция прогнозов по Ариме и истинных значений Феррари по словарям Дирихле")
+  ) %>% 
+  fmt_number (
+    columns = everything(), 
+    rows = everything(), 
+    decimals = 6
+  )
+
+gtsave(table_arima_bmw_pred_dir, filename = 'arima_pred_bmw_dir.html')
+
+#Теперь ML-можели кортестом СВМ и лес 
+#Только финансовые данные 
+bmw_dir_ok_lag <- bmw_dir_ok
+bmw_dir_ok_lag$fin_1 <- lag(bmw_dir_ok_lag$bmw_y_ok, 1)
+bmw_dir_ok_lag$fin_2 <- lag(bmw_dir_ok_lag$bmw_y_ok, 2)
+bmw_dir_ok_lag <- na.omit(bmw_dir_ok_lag)
+bmw_dir_ok_lag$bmw_diff <- as.factor(bmw_dir_ok_lag$bmw_diff)
+head(bmw_dir_ok_lag)
+
+train_ml <- bmw_dir_ok_lag[1:705,]
+test_ml <- bmw_dir_ok_lag[706:1014,]
+
+#Только финансы 
+set.seed(1234)
+Control <- trainControl(method = "cv", number = 10)
+mod_dir_fin_lin <- train(bmw_y_ok ~ fin_1 + fin_2, data = train_ml,  method = "svmLinear", trControl = Control)
+predict_svm_l_dir <- predict(object=mod_dir_fin_lin, newdata=test_ml)
+fin_arima_l_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_l_dir)
+
+set.seed(1234)
+mod_dir_fin_pol <- train(bmw_y_ok ~ fin_1 + fin_2, data = train_ml,   method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_dir <- predict(object=mod_dir_fin_pol, newdata=test_ml)
+fin_arima_p_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_p_dir)
+
+set.seed(1234)
+mod_dir_fin_rad <- train(bmw_y_ok ~ fin_1 + fin_2, data = train_ml,  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_dir <- predict(object=mod_dir_fin_rad, newdata=test_ml)
+fin_arima_r_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_r_dir)
+
+#Текущие словари
+set.seed(1234)
+mod_dir_0_lin <- train(y = train_ml$bmw_y_ok, x = train_ml[,4:13],  method = "svmLinear", trControl = Control)
+predict_svm_l_dir <- predict(object=mod_dir_0_lin, newdata=test_ml[, c(4:13)])
+news0_arima_l_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_l_dir)
+
+set.seed(1234)
+mod_dir_0_pol <- train(y = train_ml$bmw_y_ok, x = train_ml[,4:13],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_dir <- predict(object=mod_dir_0_pol, newdata=test_ml[, c(4:13)])
+news0_arima_p_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_p_dir)
+
+set.seed(1234)
+mod_dir_0_rad <- train(y = train_ml$bmw_y_ok, x = train_ml[,4:13],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_dir <- predict(object=mod_dir_0_rad, newdata=test_ml[, c(4:13)])
+news0_arima_r_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_r_dir)
+
+#Лаги - словари
+set.seed(1234)
+mod_dir_1_lin <- train(y = train_ml$bmw_y_ok, x = train_ml[,14:43],  method = "svmLinear", trControl = Control) 
+predict_svm_l_dir <- predict(object=mod_dir_1_lin, newdata=test_ml[, c(14:43)])
+news1_arima_l_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_l_dir)
+
+set.seed(1234)
+mod_dir_1_pol <- train(y = train_ml$bmw_y_ok, x = train_ml[,14:43],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_dir <- predict(object=mod_dir_1_pol, newdata=test_ml[, c(14:43)])
+news1_arima_p_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_p_dir)
+
+set.seed(1234)
+mod_dir_1_rad <- train(y = train_ml$bmw_y_ok, x = train_ml[,14:43],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_dir <- predict(object=mod_dir_1_rad, newdata=test_ml[, c(14:43)])
+news1_arima_r_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_r_dir)
+
+#Cловари - лаги + финансы
+set.seed(1234)
+mod_dir_l1_lin <- train(y = train_ml$bmw_y_ok, x = train_ml[,c(14:43, 44, 45)],  method = "svmLinear", trControl = Control)
+predict_svm_l_dir <- predict(object=mod_dir_l1_lin, newdata=test_ml[, c(14:43, 44, 45)])
+all1_arima_l_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_l_dir)
+
+set.seed(1234)
+mod_dir_l1_pol <- train(y = train_ml$bmw_y_ok, x = train_ml[,c(14:43, 44, 45)],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_dir <- predict(object=mod_dir_l1_pol, newdata=test_ml[, c(14:43, 44, 45)])
+all1_arima_p_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_p_dir)
+
+set.seed(1234)
+mod_dir_l1_rad <- train(y = train_ml$bmw_y_ok, x = train_ml[,c(14:43, 44, 45)],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_dir <- predict(object=mod_dir_l1_rad, newdata=test_ml[, c(14:43, 44, 45)])
+all1_arima_r_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_r_dir)
+
+#Cловари - текущие + финансы
+set.seed(1234)
+mod_dir_l0_lin <- train(y = train_ml$bmw_y_ok, x = train_ml[,c(4:13, 44, 45)],  method = "svmLinear", trControl = Control)
+predict_svm_l_dir <- predict(object=mod_dir_l0_lin, newdata=test_ml[, c(4:13, 44, 45)])
+all0_arima_l_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_l_dir)
+
+set.seed(1234)
+mod_dir_l0_pol <- train(y = train_ml$bmw_y_ok, x = train_ml[,c(4:13, 44, 45)],  method = "svmPoly", tuneLength = 3, trControl = Control)
+predict_svm_p_dir <- predict(object=mod_dir_l0_pol, newdata=test_ml[, c(4:13, 44, 45)])
+all0_arima_p_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_p_dir)
+
+set.seed(1234)
+mod_dir_l0_rad <- train(y = train_ml$bmw_y_ok, x = train_ml[,c(4:13, 44, 45)],  method = "svmRadial", tuneLength = 5, trControl = Control)
+predict_svm_r_dir <- predict(object=mod_dir_l0_rad, newdata=test_ml[, c(4:13, 44, 45)])
+all0_arima_r_dir <- cor.test(test_ml$bmw_y_ok, predict_svm_r_dir)
+
+#Собираем все в таблицу 
+int_a_svm_dir <- c(fin_arima_l_dir$conf.int[1], fin_arima_p_dir$conf.int[1], fin_arima_r_dir$conf.int[1],
+                 news0_arima_l_dir$conf.int[1], news0_arima_p_dir$conf.int[1], news0_arima_r_dir$conf.int[1],
+                 news1_arima_l_dir$conf.int[1], news1_arima_p_dir$conf.int[1], news1_arima_r_dir$conf.int[1], 
+                 all0_arima_l_dir$conf.int[1], all0_arima_p_dir$conf.int[1], all0_arima_r_dir$conf.int[1],
+                 all1_arima_l_dir$conf.int[1], all1_arima_p_dir$conf.int[1], all1_arima_r_dir$conf.int[1])
+
+int_b_svm_dir <- c(fin_arima_l_dir$conf.int[2], fin_arima_p_dir$conf.int[2], fin_arima_r_dir$conf.int[2],
+                 news0_arima_l_dir$conf.int[2], news0_arima_p_dir$conf.int[2], news0_arima_r_dir$conf.int[2],
+                 news1_arima_l_dir$conf.int[2], news1_arima_p_dir$conf.int[2], news1_arima_r_dir$conf.int[2], 
+                 all0_arima_l_dir$conf.int[2], all0_arima_p_dir$conf.int[2], all0_arima_r_dir$conf.int[2],
+                 all1_arima_l_dir$conf.int[2], all1_arima_p_dir$conf.int[2], all1_arima_r_dir$conf.int[2])
+
+cor_svm_dir <- c(fin_arima_l_dir$estimate, fin_arima_p_dir$estimate, fin_arima_r_dir$estimate,
+                 news0_arima_l_dir$estimate, news0_arima_p_dir$estimate, news0_arima_r_dir$estimate,
+                 news1_arima_l_dir$estimate, news1_arima_p_dir$estimate, news1_arima_r_dir$estimate, 
+                 all0_arima_l_dir$estimate, all0_arima_p_dir$estimate, all0_arima_r_dir$estimate,
+                 all1_arima_l_dir$estimate, all1_arima_p_dir$estimate, all1_arima_r_dir$estimate)
+
+pv_svm_dir <- c(fin_arima_l_dir$p.value, fin_arima_p_dir$p.value, fin_arima_r_dir$p.value,
+                news0_arima_l_dir$p.value, news0_arima_p_dir$p.value, news0_arima_r_dir$p.value,
+                news1_arima_l_dir$p.value, news1_arima_p_dir$p.value, news1_arima_r_dir$p.value, 
+                all0_arima_l_dir$p.value, all0_arima_p_dir$p.value, all0_arima_r_dir$p.value,
+                all1_arima_l_dir$p.value, all1_arima_p_dir$p.value, all1_arima_r_dir$p.value)
+
+kernel_svm_dir <- c('Linear', 'Poly', 'Radial', 
+                    'Linear', 'Poly', 'Radial',
+                    'Linear', 'Poly', 'Radial',
+                    'Linear', 'Poly', 'Radial', 
+                    'Linear', 'Poly', 'Radial')
+
+table_cortest_both_svm_dir <- data.frame(kernel_svm_dir, int_a_svm_dir, int_b_svm_dir, cor_svm_dir, pv_svm_dir)
+
+rownames(table_cortest_both_svm_dir)[1] <- 'Финансы'
+rownames(table_cortest_both_svm_dir)[4] <- 'Только текущие словари'
+rownames(table_cortest_both_svm_dir)[7] <- 'Только лаги словарей'
+rownames(table_cortest_both_svm_dir)[10] <- '2 источника - текушие'
+rownames(table_cortest_both_svm_dir)[13] <- '2 источника - лаги'
+
+
+table_cortest_both_svm_dir$int_a_svm_dir <- round(table_cortest_both_svm_dir$int_a_svm_dir, 4)
+table_cortest_both_svm_dir$int_b_svm_dir <- round(table_cortest_both_svm_dir$int_b_svm_dir, 4)
+table_cortest_both_svm_dir$cor_svm_dir <- round(table_cortest_both_svm_dir$cor_svm_dir, 4)
+table_cortest_both_svm_dir$pv_svm_dir <- round(table_cortest_both_svm_dir$pv_svm_dir, 4)
+
+table_cortest_both_svm_dir
+
+#Выгрузим
+table_svm_bmw_both_dir <- table_cortest_both_svm_dir %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование метода опорных векторов для прогнозирования доходности на разных источниках данных и словарях Дирихле")
+  ) 
+gtsave(table_svm_bmw_both_dir, filename = 'svm_pred_both_bmw_dir.html')
+
+#### Модели классификации ####
+bmw_dir_ok_lag$bmw_diff <- as.factor(bmw_dir_ok_lag$bmw_diff)
+Control <- trainControl(method = "cv", number = 10)
+
+#Только финансы 
+set.seed(1234) #логит 
+mod_ml_dir_glm_fin <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,44:45],  method = "glmnet", trControl = Control)
+best_dir_glm_fin <- print.train(mod_ml_dir_glm_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_glm_f <- mod_ml_dir_glm_fin$resample$Accuracy
+mod_ml_dir_glm_fin_acc <- mod_ml_dir_glm_fin$results[best_dir_glm_fin[,5] == "*", 3]
+mod_ml_dir_glm_fin_sd <- mod_ml_dir_glm_fin$results[best_dir_glm_fin[,5] == "*", 5]
+mod_ml_dir_glm_fin_int_a <- mod_ml_dir_glm_fin_acc - (1.645 * mod_ml_dir_glm_fin_sd)
+mod_ml_dir_glm_fin_int_b <- mod_ml_dir_glm_fin_acc + (1.645 * mod_ml_dir_glm_fin_sd)
+mod_ml_dir_glm_fin_better <- ifelse(mod_ml_dir_glm_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234) #rf
+mod_ml_dir_rf_fin <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,44:45],  method = "rf", trControl = Control)
+best_dir_rf_fin <-print.train(mod_ml_dir_rf_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_rf_f <- mod_ml_dir_rf_fin$resample$Accuracy
+mod_ml_dir_rf_fin_acc <- mod_ml_dir_rf_fin$results$Accuracy
+mod_ml_dir_rf_fin_sd <- mod_ml_dir_rf_fin$results$AccuracySD
+mod_ml_dir_rf_fin_int_a <- mod_ml_dir_rf_fin_acc - (1.645 * mod_ml_dir_rf_fin_sd)
+mod_ml_dir_rf_fin_int_b <- mod_ml_dir_rf_fin_acc + (1.645 * mod_ml_dir_rf_fin_sd)
+mod_ml_dir_rf_fin_better <- ifelse(mod_ml_dir_rf_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234) #bayes
+mod_ml_dir_bayes_fin <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,44:45],  method = "naive_bayes", trControl = Control)
+best_dir_bayes_fin <- print.train(mod_ml_dir_bayes_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_bayes_f <- mod_ml_dir_bayes_fin$resample$Accuracy
+mod_ml_dir_bayes_fin_acc <- mod_ml_dir_bayes_fin$results[best_dir_bayes_fin[,4] == "*", 4]
+mod_ml_dir_bayes_fin_sd <- mod_ml_dir_bayes_fin$results[best_dir_bayes_fin[,4] == "*", 6]
+mod_ml_dir_bayes_fin_int_a <- mod_ml_dir_bayes_fin_acc - (1.645 * mod_ml_dir_bayes_fin_sd)
+mod_ml_dir_bayes_fin_int_b <- mod_ml_dir_bayes_fin_acc + (1.645 * mod_ml_dir_bayes_fin_sd)
+mod_ml_dir_bayes_fin_better <- ifelse(mod_ml_dir_bayes_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234) #Бустинг 
+mod_ml_dir_boost_fin <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,44:45],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_dir_boost_fin <- print.train(mod_ml_dir_boost_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_boost_f <- mod_ml_dir_boost_fin$resample$Accuracy
+mod_ml_dir_boost_fin_acc <- mod_ml_dir_boost_fin$results[best_dir_boost_fin[,5] == "*", 5]
+mod_ml_dir_boost_fin_sd <- mod_ml_dir_boost_fin$results[best_dir_boost_fin[,5] == "*", 7]
+mod_ml_dir_boost_fin_int_a <- mod_ml_dir_boost_fin_acc - (1.645 * mod_ml_dir_boost_fin_sd)
+mod_ml_dir_boost_fin_int_b <- mod_ml_dir_boost_fin_acc + (1.645 * mod_ml_dir_boost_fin_sd)
+mod_ml_dir_boost_fin_better <- ifelse(mod_ml_dir_boost_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234) #SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+mod_ml_dir_svml_fin <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,44:45],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_dir_svml_fin <- print.train(mod_ml_dir_svml_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svml_f <- mod_ml_dir_svml_fin$resample$Accuracy
+mod_ml_dir_svml_fin_acc <- mod_ml_dir_svml_fin$results$Accuracy
+mod_ml_dir_svml_fin_sd <- mod_ml_dir_svml_fin$results$AccuracySD
+mod_ml_dir_svml_fin_int_a <- mod_ml_dir_svml_fin_acc - (1.645 * mod_ml_dir_svml_fin_sd)
+mod_ml_dir_svml_fin_int_b <- mod_ml_dir_svml_fin_acc + (1.645 * mod_ml_dir_svml_fin_sd)
+mod_ml_dir_svml_fin_better <- ifelse(mod_ml_dir_svml_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmp_fin <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,44:45],  method = "svmPoly", 
+                              tuneLength = 3, trControl = Control, verbose = FALSE)
+best_dir_svmp_fin <- print.train(mod_ml_dir_svmp_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmp_f <- mod_ml_dir_svmp_fin$resample$Accuracy
+mod_ml_dir_svmp_fin_acc <- mod_ml_dir_svmp_fin$results[best_dir_svmp_fin[,6] == "*", 4]
+mod_ml_dir_svmp_fin_sd <- mod_ml_dir_svmp_fin$results[best_dir_svmp_fin[,6] == "*", 6]
+mod_ml_dir_svmp_fin_int_a <- mod_ml_dir_svmp_fin_acc - (1.645 * mod_ml_dir_svmp_fin_sd)
+mod_ml_dir_svmp_fin_int_b <- mod_ml_dir_svmp_fin_acc + (1.645 * mod_ml_dir_svmp_fin_sd)
+mod_ml_dir_svmp_fin_better <- ifelse(mod_ml_dir_svmp_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmr_fin <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,44:45],  method = "svmRadial", 
+                              tuneLength = 5, trControl = Control, verbose = FALSE)
+best_dir_svmr_fin <- print.train(mod_ml_dir_svmr_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmr_f <- mod_ml_dir_svmr_fin$resample$Accuracy
+mod_ml_dir_svmr_fin_acc <- mod_ml_dir_svmr_fin$results[best_dir_svmr_fin[,4] == "*", 3]
+mod_ml_dir_svmr_fin_sd <- mod_ml_dir_svmr_fin$results[best_dir_svmr_fin[,4] == "*", 5]
+mod_ml_dir_svmr_fin_int_a <- mod_ml_dir_svmr_fin_acc - (1.645 * mod_ml_dir_svmr_fin_sd)
+mod_ml_dir_svmr_fin_int_b <- mod_ml_dir_svmr_fin_acc + (1.645 * mod_ml_dir_svmr_fin_sd)
+mod_ml_dir_svmr_fin_better <- ifelse(mod_ml_dir_svmr_fin_int_a > 0.5, '+', '-')
+
+Comp_fin_dir <- resamples(list(bayes = mod_ml_dir_bayes_fin,
+                           logit = mod_ml_dir_glm_fin,
+                           rf = mod_ml_dir_rf_fin,
+                           boost = mod_ml_dir_boost_fin,
+                           svm_lin = mod_ml_dir_svml_fin, 
+                           svm_poly = mod_ml_dir_svmp_fin, 
+                           svm_rad = mod_ml_dir_svmr_fin))
+
+bwplot(Comp_fin_dir, metric="Accuracy")  
+
+#Только новости - дирихле текущий 
+set.seed(1234) #логит
+mod_ml_dir_glm_n0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,4:13],  method = "glmnet", trControl = Control)
+best_dir_glm_n0_1 <- print.train(mod_ml_dir_glm_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_glm_n_0_1 <- mod_ml_dir_glm_n0_1$resample$Accuracy
+mod_ml_dir_glm_n0_1_acc <- mod_ml_dir_glm_n0_1$results[best_dir_glm_n0_1[,5] == "*", 3]
+mod_ml_dir_glm_n0_1_sd <- mod_ml_dir_glm_n0_1$results[best_dir_glm_n0_1[,5] == "*", 5]
+mod_ml_dir_glm_n0_1_int_a <- mod_ml_dir_glm_n0_1_acc - (1.645 * mod_ml_dir_glm_n0_1_sd)
+mod_ml_dir_glm_n0_1_int_b <- mod_ml_dir_glm_n0_1_acc + (1.645 * mod_ml_dir_glm_n0_1_sd)
+mod_ml_dir_glm_n0_1_better <- ifelse(mod_ml_dir_glm_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234) #rf
+mod_ml_dir_rf_n0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,4:13],  method = "rf", trControl = Control)
+best_dir_rf_n0_1 <-print.train(mod_ml_dir_rf_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_rf_n_0_1 <- mod_ml_dir_rf_n0_1$resample$Accuracy
+mod_ml_dir_rf_n0_1_acc <- mod_ml_dir_rf_n0_1$results[best_dir_rf_n0_1[,4] == "*", 2]
+mod_ml_dir_rf_n0_1_sd <- mod_ml_dir_rf_n0_1$results[best_dir_rf_n0_1[,4] == "*", 4]
+mod_ml_dir_rf_n0_1_int_a <- mod_ml_dir_rf_n0_1_acc - (1.645 * mod_ml_dir_rf_n0_1_sd)
+mod_ml_dir_rf_n0_1_int_b <- mod_ml_dir_rf_n0_1_acc + (1.645 * mod_ml_dir_rf_n0_1_sd)
+mod_ml_dir_rf_n0_1_better <- ifelse(mod_ml_dir_rf_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234) #bayes
+mod_ml_dir_bayes_n0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,4:13],  method = "naive_bayes", trControl = Control)
+best_dir_bayes_n0_1 <- print.train(mod_ml_dir_bayes_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_bayes_n_0_1 <- mod_ml_dir_bayes_n0_1$resample$Accuracy
+mod_ml_dir_bayes_n0_1_acc <- mod_ml_dir_bayes_n0_1$results[best_dir_bayes_n0_1[,4] == "*", 4]
+mod_ml_dir_bayes_n0_1_sd <- mod_ml_dir_bayes_n0_1$results[best_dir_bayes_n0_1[,4] == "*", 6]
+mod_ml_dir_bayes_n0_1_int_a <- mod_ml_dir_bayes_n0_1_acc - (1.645 * mod_ml_dir_bayes_n0_1_sd)
+mod_ml_dir_bayes_n0_1_int_b <- mod_ml_dir_bayes_n0_1_acc + (1.645 * mod_ml_dir_bayes_n0_1_sd)
+mod_ml_dir_bayes_n0_1_better <- ifelse(mod_ml_dir_bayes_n0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_dir_boost_n0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,4:13],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_dir_boost_n0_1 <- print.train(mod_ml_dir_boost_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_boost_n_0_1 <- mod_ml_dir_boost_n0_1$resample$Accuracy
+mod_ml_dir_boost_n0_1_acc <- mod_ml_dir_boost_n0_1$results[best_dir_boost_n0_1[,5] == "*", 5]
+mod_ml_dir_boost_n0_1_sd <- mod_ml_dir_boost_n0_1$results[best_dir_boost_n0_1[,5] == "*", 7]
+mod_ml_dir_boost_n0_1_int_a <- mod_ml_dir_boost_n0_1_acc - (1.645 * mod_ml_dir_boost_n0_1_sd)
+mod_ml_dir_boost_n0_1_int_b <- mod_ml_dir_boost_n0_1_acc + (1.645 * mod_ml_dir_boost_n0_1_sd)
+mod_ml_dir_boost_n0_1_better <- ifelse(mod_ml_dir_boost_n0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_dir_svml_n0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,4:13],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_dir_svml_n0_1 <- print.train(mod_ml_dir_svml_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svml_n_0_1 <- mod_ml_dir_svml_n0_1$resample$Accuracy
+mod_ml_dir_svml_n0_1_acc <- mod_ml_dir_svml_n0_1$results$Accuracy
+mod_ml_dir_svml_n0_1_sd <- mod_ml_dir_svml_n0_1$results$AccuracySD
+mod_ml_dir_svml_n0_1_int_a <- mod_ml_dir_svml_n0_1_acc - (1.645 * mod_ml_dir_svml_n0_1_sd)
+mod_ml_dir_svml_n0_1_int_b <- mod_ml_dir_svml_n0_1_acc + (1.645 * mod_ml_dir_svml_n0_1_sd)
+mod_ml_dir_svml_n0_1_better <- ifelse(mod_ml_dir_svml_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmp_n0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,4:13],  method = "svmPoly", 
+                               tuneLength = 3, trControl = Control, verbose = FALSE)
+best_dir_svmp_n0_1 <- print.train(mod_ml_dir_svmp_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmp_n_0_1 <- mod_ml_dir_svmp_n0_1$resample$Accuracy
+mod_ml_dir_svmp_n0_1_acc <- mod_ml_dir_svmp_n0_1$results[best_dir_svmp_n0_1[,6] == "*", 4]
+mod_ml_dir_svmp_n0_1_sd <- mod_ml_dir_svmp_n0_1$results[best_dir_svmp_n0_1[,6] == "*", 6]
+mod_ml_dir_svmp_n0_1_int_a <- mod_ml_dir_svmp_n0_1_acc - (1.645 * mod_ml_dir_svmp_n0_1_sd)
+mod_ml_dir_svmp_n0_1_int_b <- mod_ml_dir_svmp_n0_1_acc + (1.645 * mod_ml_dir_svmp_n0_1_sd)
+mod_ml_dir_svmp_n0_1_better <- ifelse(mod_ml_dir_svmp_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmr_n0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,4:13],  method = "svmRadial", 
+                               tuneLength = 5, trControl = Control, verbose = FALSE)
+best_dir_svmr_n0_1 <- print.train(mod_ml_dir_svmr_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmr_n_0_1 <- mod_ml_dir_svmr_n0_1$resample$Accuracy
+mod_ml_dir_svmr_n0_1_acc <- mod_ml_dir_svmr_n0_1$results[best_dir_svmr_n0_1[,4] == "*", 3]
+mod_ml_dir_svmr_n0_1_sd <- mod_ml_dir_svmr_n0_1$results[best_dir_svmr_n0_1[,4] == "*", 5]
+mod_ml_dir_svmr_n0_1_int_a <- mod_ml_dir_svmr_n0_1_acc - (1.645 * mod_ml_dir_svmr_n0_1_sd)
+mod_ml_dir_svmr_n0_1_int_b <- mod_ml_dir_svmr_n0_1_acc + (1.645 * mod_ml_dir_svmr_n0_1_sd)
+mod_ml_dir_svmr_n0_1_better <- ifelse(mod_ml_dir_svmr_n0_1_int_a > 0.5, '+', '-')
+
+Comp_n0_1_dir <- resamples(list(bayes = mod_ml_dir_bayes_n0_1,
+                            logit = mod_ml_dir_glm_n0_1,
+                            rf = mod_ml_dir_rf_n0_1,
+                            boost = mod_ml_dir_boost_n0_1,
+                            svm_lin = mod_ml_dir_svml_n0_1, 
+                            svm_poly = mod_ml_dir_svmp_n0_1, 
+                            svm_rad = mod_ml_dir_svmr_n0_1))
+
+bwplot(Comp_n0_1_dir, metric="Accuracy") 
+
+#Лаги словарей
+set.seed(1234) #логит
+mod_ml_dir_glm_n1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,14:43],  method = "glmnet", trControl = Control)
+best_dir_glm_n1_5 <- print.train(mod_ml_dir_glm_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_glm_n_1_5 <- mod_ml_dir_glm_n1_5$resample$Accuracy
+mod_ml_dir_glm_n1_5_acc <- mod_ml_dir_glm_n1_5$results[best_dir_glm_n1_5[,5] == "*", 3]
+mod_ml_dir_glm_n1_5_sd <- mod_ml_dir_glm_n1_5$results[best_dir_glm_n1_5[,5] == "*", 5]
+mod_ml_dir_glm_n1_5_int_a <- mod_ml_dir_glm_n1_5_acc - (1.645 * mod_ml_dir_glm_n1_5_sd)
+mod_ml_dir_glm_n1_5_int_b <- mod_ml_dir_glm_n1_5_acc + (1.645 * mod_ml_dir_glm_n1_5_sd)
+mod_ml_dir_glm_n1_5_better <- ifelse(mod_ml_dir_glm_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_dir_rf_n1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,14:43],  method = "rf", trControl = Control)
+best_dir_rf_n1_5 <-print.train(mod_ml_dir_rf_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_rf_n_1_5 <- mod_ml_dir_rf_n1_5$resample$Accuracy
+mod_ml_dir_rf_n1_5_acc <- mod_ml_dir_rf_n1_5$results[best_dir_rf_n1_5[,4] == "*", 2]
+mod_ml_dir_rf_n1_5_sd <- mod_ml_dir_rf_n1_5$results[best_dir_rf_n1_5[,4] == "*", 4]
+mod_ml_dir_rf_n1_5_int_a <- mod_ml_dir_rf_n1_5_acc - (1.645 * mod_ml_dir_rf_n1_5_sd)
+mod_ml_dir_rf_n1_5_int_b <- mod_ml_dir_rf_n1_5_acc + (1.645 * mod_ml_dir_rf_n1_5_sd)
+mod_ml_dir_rf_n1_5_better <- ifelse(mod_ml_dir_rf_n1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_dir_bayes_n1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,14:43],  method = "naive_bayes", trControl = Control)
+best_dir_bayes_n1_5 <- print.train(mod_ml_dir_bayes_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_bayes_n_1_5 <- mod_ml_dir_bayes_n1_5$resample$Accuracy
+mod_ml_dir_bayes_n1_5_acc <- mod_ml_dir_bayes_n1_5$results[best_dir_bayes_n1_5[,4] == "*", 4]
+mod_ml_dir_bayes_n1_5_sd <- mod_ml_dir_bayes_n1_5$results[best_dir_bayes_n1_5[,4] == "*", 6]
+mod_ml_dir_bayes_n1_5_int_a <- mod_ml_dir_bayes_n1_5_acc - (1.645 * mod_ml_dir_bayes_n1_5_sd)
+mod_ml_dir_bayes_n1_5_int_b <- mod_ml_dir_bayes_n1_5_acc + (1.645 * mod_ml_dir_bayes_n1_5_sd)
+mod_ml_dir_bayes_n1_5_better <- ifelse(mod_ml_dir_bayes_n1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_dir_boost_n1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,14:43],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_dir_boost_n1_5 <- print.train(mod_ml_dir_boost_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_boost_n_1_5 <- mod_ml_dir_boost_n1_5$resample$Accuracy
+mod_ml_dir_boost_n1_5_acc <- mod_ml_dir_boost_n1_5$results[best_dir_boost_n1_5[,5] == "*", 5]
+mod_ml_dir_boost_n1_5_sd <- mod_ml_dir_boost_n1_5$results[best_dir_boost_n1_5[,5] == "*", 7]
+mod_ml_dir_boost_n1_5_int_a <- mod_ml_dir_boost_n1_5_acc - (1.645 * mod_ml_dir_boost_n1_5_sd)
+mod_ml_dir_boost_n1_5_int_b <- mod_ml_dir_boost_n1_5_acc + (1.645 * mod_ml_dir_boost_n1_5_sd)
+mod_ml_dir_boost_n1_5_better <- ifelse(mod_ml_dir_boost_n1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_dir_svml_n1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,14:43],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_dir_svml_n1_5 <- print.train(mod_ml_dir_svml_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svml_n_1_5 <- mod_ml_dir_svml_n1_5$resample$Accuracy
+mod_ml_dir_svml_n1_5_acc <- mod_ml_dir_svml_n1_5$results$Accuracy
+mod_ml_dir_svml_n1_5_sd <- mod_ml_dir_svml_n1_5$results$AccuracySD
+mod_ml_dir_svml_n1_5_int_a <- mod_ml_dir_svml_n1_5_acc - (1.645 * mod_ml_dir_svml_n1_5_sd)
+mod_ml_dir_svml_n1_5_int_b <- mod_ml_dir_svml_n1_5_acc + (1.645 * mod_ml_dir_svml_n1_5_sd)
+mod_ml_dir_svml_n1_5_better <- ifelse(mod_ml_dir_svml_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmp_n1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,14:43],  method = "svmPoly", 
+                               tuneLength = 3, trControl = Control, verbose = FALSE)
+best_dir_svmp_n1_5 <- print.train(mod_ml_dir_svmp_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmp_n_1_5 <- mod_ml_dir_svmp_n1_5$resample$Accuracy
+mod_ml_dir_svmp_n1_5_acc <- mod_ml_dir_svmp_n1_5$results[best_dir_svmp_n1_5[,6] == "*", 4]
+mod_ml_dir_svmp_n1_5_sd <- mod_ml_dir_svmp_n1_5$results[best_dir_svmp_n1_5[,6] == "*", 6]
+mod_ml_dir_svmp_n1_5_int_a <- mod_ml_dir_svmp_n1_5_acc - (1.645 * mod_ml_dir_svmp_n1_5_sd)
+mod_ml_dir_svmp_n1_5_int_b <- mod_ml_dir_svmp_n1_5_acc + (1.645 * mod_ml_dir_svmp_n1_5_sd)
+mod_ml_dir_svmp_n1_5_better <- ifelse(mod_ml_dir_svmp_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmr_n1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,14:43],  method = "svmRadial", 
+                               tuneLength = 5, trControl = Control, verbose = FALSE)
+best_dir_svmr_n1_5 <- print.train(mod_ml_dir_svmr_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmr_n_1_5 <- mod_ml_dir_svmr_n1_5$resample$Accuracy
+mod_ml_dir_svmr_n1_5_acc <- mod_ml_dir_svmr_n1_5$results[best_dir_svmr_n1_5[,4] == "*", 3]
+mod_ml_dir_svmr_n1_5_sd <- mod_ml_dir_svmr_n1_5$results[best_dir_svmr_n1_5[,4] == "*", 5]
+mod_ml_dir_svmr_n1_5_int_a <- mod_ml_dir_svmr_n1_5_acc - (1.645 * mod_ml_dir_svmr_n1_5_sd)
+mod_ml_dir_svmr_n1_5_int_b <- mod_ml_dir_svmr_n1_5_acc + (1.645 * mod_ml_dir_svmr_n1_5_sd)
+mod_ml_dir_svmr_n1_5_better <- ifelse(mod_ml_dir_svmr_n1_5_int_a > 0.5, '+', '-')
+
+Comp_n1_5_dir <- resamples(list(bayes = mod_ml_dir_bayes_n1_5,
+                            logit = mod_ml_dir_glm_n1_5,
+                            rf = mod_ml_dir_rf_n1_5,
+                            boost = mod_ml_dir_boost_n1_5,
+                            svm_lin = mod_ml_dir_svml_n1_5, 
+                            svm_poly = mod_ml_dir_svmp_n1_5, 
+                            svm_rad = mod_ml_dir_svmr_n1_5))
+
+bwplot(Comp_n1_5_dir, metric="Accuracy") 
+
+#Теперь финансы и текущие новости 
+set.seed(1234) #логит
+mod_ml_dir_glm_all0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "glmnet", trControl = Control)
+best_dir_glm_all0_1 <- print.train(mod_ml_dir_glm_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_glm_all_0_1 <- mod_ml_dir_glm_all0_1$resample$Accuracy
+mod_ml_dir_glm_all0_1_acc <- mod_ml_dir_glm_all0_1$results[best_dir_glm_all0_1[,5] == "*", 3]
+mod_ml_dir_glm_all0_1_sd <- mod_ml_dir_glm_all0_1$results[best_dir_glm_all0_1[,5] == "*", 5]
+mod_ml_dir_glm_all0_1_int_a <- mod_ml_dir_glm_all0_1_acc - (1.645 * mod_ml_dir_glm_all0_1_sd)
+mod_ml_dir_glm_all0_1_int_b <- mod_ml_dir_glm_all0_1_acc + (1.645 * mod_ml_dir_glm_all0_1_sd)
+mod_ml_dir_glm_all0_1_better <- ifelse(mod_ml_dir_glm_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234) #rf
+mod_ml_dir_rf_all0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "rf", trControl = Control)
+best_dir_rf_all0_1 <-print.train(mod_ml_dir_rf_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_rf_all_0_1 <- mod_ml_dir_rf_all0_1$resample$Accuracy
+mod_ml_dir_rf_all0_1_acc <- mod_ml_dir_rf_all0_1$results[best_dir_rf_all0_1[,4] == "*", 2]
+mod_ml_dir_rf_all0_1_sd <- mod_ml_dir_rf_all0_1$results[best_dir_rf_all0_1[,4] == "*", 4]
+mod_ml_dir_rf_all0_1_int_a <- mod_ml_dir_rf_all0_1_acc - (1.645 * mod_ml_dir_rf_all0_1_sd)
+mod_ml_dir_rf_all0_1_int_b <- mod_ml_dir_rf_all0_1_acc + (1.645 * mod_ml_dir_rf_all0_1_sd)
+mod_ml_dir_rf_all0_1_better <- ifelse(mod_ml_dir_rf_all0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_dir_bayes_all0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "naive_bayes", trControl = Control)
+best_dir_bayes_all0_1 <- print.train(mod_ml_dir_bayes_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_bayes_all_0_1 <- mod_ml_dir_bayes_all0_1$resample$Accuracy
+mod_ml_dir_bayes_all0_1_acc <- mod_ml_dir_bayes_all0_1$results[best_dir_bayes_all0_1[,4] == "*", 4]
+mod_ml_dir_bayes_all0_1_sd <- mod_ml_dir_bayes_all0_1$results[best_dir_bayes_all0_1[,4] == "*", 6]
+mod_ml_dir_bayes_all0_1_int_a <- mod_ml_dir_bayes_all0_1_acc - (1.645 * mod_ml_dir_bayes_all0_1_sd)
+mod_ml_dir_bayes_all0_1_int_b <- mod_ml_dir_bayes_all0_1_acc + (1.645 * mod_ml_dir_bayes_all0_1_sd)
+mod_ml_dir_bayes_all0_1_better <- ifelse(mod_ml_dir_bayes_all0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_dir_boost_all0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_dir_boost_all0_1 <- print.train(mod_ml_dir_boost_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_boost_all_0_1 <- mod_ml_dir_boost_all0_1$resample$Accuracy
+mod_ml_dir_boost_all0_1_acc <- mod_ml_dir_boost_all0_1$results[best_dir_boost_all0_1[,5] == "*", 5]
+mod_ml_dir_boost_all0_1_sd <- mod_ml_dir_boost_all0_1$results[best_dir_boost_all0_1[,5] == "*", 7]
+mod_ml_dir_boost_all0_1_int_a <- mod_ml_dir_boost_all0_1_acc - (1.645 * mod_ml_dir_boost_all0_1_sd)
+mod_ml_dir_boost_all0_1_int_b <- mod_ml_dir_boost_all0_1_acc + (1.645 * mod_ml_dir_boost_all0_1_sd)
+mod_ml_dir_boost_all0_1_better <- ifelse(mod_ml_dir_boost_all0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_dir_svml_all0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_dir_svml_all0_1 <- print.train(mod_ml_dir_svml_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svml_all_0_1 <- mod_ml_dir_svml_all0_1$resample$Accuracy
+mod_ml_dir_svml_all0_1_acc <- mod_ml_dir_svml_all0_1$results$Accuracy
+mod_ml_dir_svml_all0_1_sd <- mod_ml_dir_svml_all0_1$results$AccuracySD
+mod_ml_dir_svml_all0_1_int_a <- mod_ml_dir_svml_all0_1_acc - (1.645 * mod_ml_dir_svml_all0_1_sd)
+mod_ml_dir_svml_all0_1_int_b <- mod_ml_dir_svml_all0_1_acc + (1.645 * mod_ml_dir_svml_all0_1_sd)
+mod_ml_dir_svml_all0_1_better <- ifelse(mod_ml_dir_svml_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmp_all0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "svmPoly", 
+                                 tuneLength = 3, trControl = Control, verbose = FALSE)
+best_dir_svmp_all0_1 <- print.train(mod_ml_dir_svmp_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmp_all_0_1 <- mod_ml_dir_svmp_all0_1$resample$Accuracy
+mod_ml_dir_svmp_all0_1_acc <- mod_ml_dir_svmp_all0_1$results[best_dir_svmp_all0_1[,6] == "*", 4]
+mod_ml_dir_svmp_all0_1_sd <- mod_ml_dir_svmp_all0_1$results[best_dir_svmp_all0_1[,6] == "*", 6]
+mod_ml_dir_svmp_all0_1_int_a <- mod_ml_dir_svmp_all0_1_acc - (1.645 * mod_ml_dir_svmp_all0_1_sd)
+mod_ml_dir_svmp_all0_1_int_b <- mod_ml_dir_svmp_all0_1_acc + (1.645 * mod_ml_dir_svmp_all0_1_sd)
+mod_ml_dir_svmp_all0_1_better <- ifelse(mod_ml_dir_svmp_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmr_all0_1 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "svmRadial", 
+                                 tuneLength = 5, trControl = Control, verbose = FALSE)
+best_dir_svmr_all0_1 <- print.train(mod_ml_dir_svmr_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmr_all_0_1 <- mod_ml_dir_svmr_all0_1$resample$Accuracy
+mod_ml_dir_svmr_all0_1_acc <- mod_ml_dir_svmr_all0_1$results[best_dir_svmr_all0_1[,4] == "*", 3]
+mod_ml_dir_svmr_all0_1_sd <- mod_ml_dir_svmr_all0_1$results[best_dir_svmr_all0_1[,4] == "*", 5]
+mod_ml_dir_svmr_all0_1_int_a <- mod_ml_dir_svmr_all0_1_acc - (1.645 * mod_ml_dir_svmr_all0_1_sd)
+mod_ml_dir_svmr_all0_1_int_b <- mod_ml_dir_svmr_all0_1_acc + (1.645 * mod_ml_dir_svmr_all0_1_sd)
+mod_ml_dir_svmr_all0_1_better <- ifelse(mod_ml_dir_svmr_all0_1_int_a > 0.5, '+', '-')
+
+Comp_all0_1_dir <- resamples(list(bayes = mod_ml_dir_bayes_all0_1,
+                              logit = mod_ml_dir_glm_all0_1,
+                              rf = mod_ml_dir_rf_all0_1,
+                              boost = mod_ml_dir_boost_all0_1,
+                              svm_lin = mod_ml_dir_svml_all0_1, 
+                              svm_poly = mod_ml_dir_svmp_all0_1, 
+                              svm_rad = mod_ml_dir_svmr_all0_1))
+
+bwplot(Comp_all0_1_dir, metric="Accuracy")
+
+#Теперь финансы и текст с лагами 
+#Новости и финансы, лаг 1-5
+set.seed(1234) #логит
+mod_ml_dir_glm_all1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "glmnet", trControl = Control)
+best_dir_glm_all1_5 <- print.train(mod_ml_dir_glm_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_glm_all_1_5 <- mod_ml_dir_glm_all1_5$resample$Accuracy
+mod_ml_dir_glm_all1_5_acc <- mod_ml_dir_glm_all1_5$results[best_dir_glm_all1_5[,5] == "*", 3]
+mod_ml_dir_glm_all1_5_sd <- mod_ml_dir_glm_all1_5$results[best_dir_glm_all1_5[,5] == "*", 5]
+mod_ml_dir_glm_all1_5_int_a <- mod_ml_dir_glm_all1_5_acc - (1.645 * mod_ml_dir_glm_all1_5_sd)
+mod_ml_dir_glm_all1_5_int_b <- mod_ml_dir_glm_all1_5_acc + (1.645 * mod_ml_dir_glm_all1_5_sd)
+mod_ml_dir_glm_all1_5_better <- ifelse(mod_ml_dir_glm_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_ml_dir_rf_all1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "rf", trControl = Control)
+best_dir_rf_all1_5 <-print.train(mod_ml_dir_rf_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_rf_all_1_5 <- mod_ml_dir_rf_all1_5$resample$Accuracy
+mod_ml_dir_rf_all1_5_acc <- mod_ml_dir_rf_all1_5$results[best_dir_rf_all1_5[,4] == "*", 2]
+mod_ml_dir_rf_all1_5_sd <- mod_ml_dir_rf_all1_5$results[best_dir_rf_all1_5[,4] == "*", 4]
+mod_ml_dir_rf_all1_5_int_a <- mod_ml_dir_rf_all1_5_acc - (1.645 * mod_ml_dir_rf_all1_5_sd)
+mod_ml_dir_rf_all1_5_int_b <- mod_ml_dir_rf_all1_5_acc + (1.645 * mod_ml_dir_rf_all1_5_sd)
+mod_ml_dir_rf_all1_5_better <- ifelse(mod_ml_dir_rf_all1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_ml_dir_bayes_all1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "naive_bayes", trControl = Control)
+best_dir_bayes_all1_5 <- print.train(mod_ml_dir_bayes_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_bayes_all_1_5 <- mod_ml_dir_bayes_all1_5$resample$Accuracy
+mod_ml_dir_bayes_all1_5_acc <- mod_ml_dir_bayes_all1_5$results[best_dir_bayes_all1_5[,4] == "*", 4]
+mod_ml_dir_bayes_all1_5_sd <- mod_ml_dir_bayes_all1_5$results[best_dir_bayes_all1_5[,4] == "*", 6]
+mod_ml_dir_bayes_all1_5_int_a <- mod_ml_dir_bayes_all1_5_acc - (1.645 * mod_ml_dir_bayes_all1_5_sd)
+mod_ml_dir_bayes_all1_5_int_b <- mod_ml_dir_bayes_all1_5_acc + (1.645 * mod_ml_dir_bayes_all1_5_sd)
+mod_ml_dir_bayes_all1_5_better <- ifelse(mod_ml_dir_bayes_all1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_ml_dir_boost_all1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_dir_boost_all1_5 <- print.train(mod_ml_dir_boost_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_boost_all_1_5 <- mod_ml_dir_boost_all1_5$resample$Accuracy
+mod_ml_dir_boost_all1_5_acc <- mod_ml_dir_boost_all1_5$results[best_dir_boost_all1_5[,5] == "*", 5]
+mod_ml_dir_boost_all1_5_sd <- mod_ml_dir_boost_all1_5$results[best_dir_boost_all1_5[,5] == "*", 7]
+mod_ml_dir_boost_all1_5_int_a <- mod_ml_dir_boost_all1_5_acc - (1.645 * mod_ml_dir_boost_all1_5_sd)
+mod_ml_dir_boost_all1_5_int_b <- mod_ml_dir_boost_all1_5_acc + (1.645 * mod_ml_dir_boost_all1_5_sd)
+mod_ml_dir_boost_all1_5_better <- ifelse(mod_ml_dir_boost_all1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_ml_dir_svml_all1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_dir_svml_all1_5 <- print.train(mod_ml_dir_svml_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svml_all_1_5 <- mod_ml_dir_svml_all1_5$resample$Accuracy
+mod_ml_dir_svml_all1_5_acc <- mod_ml_dir_svml_all1_5$results$Accuracy
+mod_ml_dir_svml_all1_5_sd <- mod_ml_dir_svml_all1_5$results$AccuracySD
+mod_ml_dir_svml_all1_5_int_a <- mod_ml_dir_svml_all1_5_acc - (1.645 * mod_ml_dir_svml_all1_5_sd)
+mod_ml_dir_svml_all1_5_int_b <- mod_ml_dir_svml_all1_5_acc + (1.645 * mod_ml_dir_svml_all1_5_sd)
+mod_ml_dir_svml_all1_5_better <- ifelse(mod_ml_dir_svml_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmp_all1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "svmPoly", 
+                                 tuneLength = 3, trControl = Control, verbose = FALSE)
+best_dir_svmp_all1_5 <- print.train(mod_ml_dir_svmp_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmp_all_1_5 <- mod_ml_dir_svmp_all1_5$resample$Accuracy
+mod_ml_dir_svmp_all1_5_acc <- mod_ml_dir_svmp_all1_5$results[best_dir_svmp_all1_5[,6] == "*", 4]
+mod_ml_dir_svmp_all1_5_sd <- mod_ml_dir_svmp_all1_5$results[best_dir_svmp_all1_5[,6] == "*", 6]
+mod_ml_dir_svmp_all1_5_int_a <- mod_ml_dir_svmp_all1_5_acc - (1.645 * mod_ml_dir_svmp_all1_5_sd)
+mod_ml_dir_svmp_all1_5_int_b <- mod_ml_dir_svmp_all1_5_acc + (1.645 * mod_ml_dir_svmp_all1_5_sd)
+mod_ml_dir_svmp_all1_5_better <- ifelse(mod_ml_dir_svmp_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_ml_dir_svmr_all1_5 <- train(y = bmw_dir_ok_lag$bmw_diff, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "svmRadial", 
+                                 tuneLength = 5, trControl = Control, verbose = FALSE)
+best_dir_svmr_all1_5 <- print.train(mod_ml_dir_svmr_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_svmr_all_1_5 <- mod_ml_dir_svmr_all1_5$resample$Accuracy
+mod_ml_dir_svmr_all1_5_acc <- mod_ml_dir_svmr_all1_5$results[best_dir_svmr_all1_5[,4] == "*", 3]
+mod_ml_dir_svmr_all1_5_sd <- mod_ml_dir_svmr_all1_5$results[best_dir_svmr_all1_5[,4] == "*", 5]
+mod_ml_dir_svmr_all1_5_int_a <- mod_ml_dir_svmr_all1_5_acc - (1.645 * mod_ml_dir_svmr_all1_5_sd)
+mod_ml_dir_svmr_all1_5_int_b <- mod_ml_dir_svmr_all1_5_acc + (1.645 * mod_ml_dir_svmr_all1_5_sd)
+mod_ml_dir_svmr_all1_5_better <- ifelse(mod_ml_dir_svmr_all1_5_int_a > 0.5, '+', '-')
+
+Comp_all1_5_dir <- resamples(list(bayes = mod_ml_dir_bayes_all1_5,
+                              logit = mod_ml_dir_glm_all1_5,
+                              rf = mod_ml_dir_rf_all1_5,
+                              boost = mod_ml_dir_boost_all1_5,
+                              svm_lin = mod_ml_dir_svml_all1_5, 
+                              svm_poly = mod_ml_dir_svmp_all1_5, 
+                              svm_rad = mod_ml_dir_svmr_all1_5))
+
+bwplot(Comp_all1_5_dir, metric="Accuracy")
+
+#Таблица - итоговая 
+ml_accuracy_dir <- c(mod_ml_dir_glm_fin_acc, mod_ml_dir_rf_fin_acc, mod_ml_dir_bayes_fin_acc, 
+                 mod_ml_dir_boost_fin_acc, mod_ml_dir_svml_fin_acc, mod_ml_dir_svmp_fin_acc, mod_ml_dir_svmr_fin_acc, 
+                 mod_ml_dir_glm_n0_1_acc, mod_ml_dir_rf_n0_1_acc, mod_ml_dir_bayes_n0_1_acc, 
+                 mod_ml_dir_boost_n0_1_acc, mod_ml_dir_svml_n0_1_acc, mod_ml_dir_svmp_n0_1_acc, mod_ml_dir_svmr_n0_1_acc,
+                 mod_ml_dir_glm_n1_5_acc, mod_ml_dir_rf_n1_5_acc, mod_ml_dir_bayes_n1_5_acc, 
+                 mod_ml_dir_boost_n1_5_acc, mod_ml_dir_svml_n1_5_acc, mod_ml_dir_svmp_n1_5_acc, mod_ml_dir_svmr_n1_5_acc,
+                 mod_ml_dir_glm_all0_1_acc, mod_ml_dir_rf_all0_1_acc, mod_ml_dir_bayes_all0_1_acc, 
+                 mod_ml_dir_boost_all0_1_acc, mod_ml_dir_svml_all0_1_acc, mod_ml_dir_svmp_all0_1_acc, mod_ml_dir_svmr_all0_1_acc, 
+                 mod_ml_dir_glm_all1_5_acc, mod_ml_dir_rf_all1_5_acc, mod_ml_dir_bayes_all1_5_acc, 
+                 mod_ml_dir_boost_all1_5_acc, mod_ml_dir_svml_all1_5_acc, mod_ml_dir_svmp_all1_5_acc, mod_ml_dir_svmr_all1_5_acc)
+
+ml_sd_a_dir <- c(mod_ml_dir_glm_fin_int_a, mod_ml_dir_rf_fin_int_a, mod_ml_dir_bayes_fin_int_a, 
+             mod_ml_dir_boost_fin_int_a, mod_ml_dir_svml_fin_int_a, mod_ml_dir_svmp_fin_int_a, mod_ml_dir_svmr_fin_int_a, 
+             mod_ml_dir_glm_n0_1_int_a, mod_ml_dir_rf_n0_1_int_a, mod_ml_dir_bayes_n0_1_int_a, 
+             mod_ml_dir_boost_n0_1_int_a, mod_ml_dir_svml_n0_1_int_a, mod_ml_dir_svmp_n0_1_int_a, mod_ml_dir_svmr_n0_1_int_a,
+             mod_ml_dir_glm_n1_5_int_a, mod_ml_dir_rf_n1_5_int_a, mod_ml_dir_bayes_n1_5_int_a, 
+             mod_ml_dir_boost_n1_5_int_a, mod_ml_dir_svml_n1_5_int_a, mod_ml_dir_svmp_n1_5_int_a, mod_ml_dir_svmr_n1_5_int_a,
+             mod_ml_dir_glm_all0_1_int_a, mod_ml_dir_rf_all0_1_int_a, mod_ml_dir_bayes_all0_1_int_a, 
+             mod_ml_dir_boost_all0_1_int_a, mod_ml_dir_svml_all0_1_int_a, mod_ml_dir_svmp_all0_1_int_a, mod_ml_dir_svmr_all0_1_int_a, 
+             mod_ml_dir_glm_all1_5_int_a, mod_ml_dir_rf_all1_5_int_a, mod_ml_dir_bayes_all1_5_int_a, 
+             mod_ml_dir_boost_all1_5_int_a, mod_ml_dir_svml_all1_5_int_a, mod_ml_dir_svmp_all1_5_int_a, mod_ml_dir_svmr_all1_5_int_a)
+
+ml_sd_b_dir <- c(mod_ml_dir_glm_fin_int_b, mod_ml_dir_rf_fin_int_b, mod_ml_dir_bayes_fin_int_b, 
+             mod_ml_dir_boost_fin_int_b, mod_ml_dir_svml_fin_int_b, mod_ml_dir_svmp_fin_int_b, mod_ml_dir_svmr_fin_int_b, 
+             mod_ml_dir_glm_n0_1_int_b, mod_ml_dir_rf_n0_1_int_b, mod_ml_dir_bayes_n0_1_int_b, 
+             mod_ml_dir_boost_n0_1_int_b, mod_ml_dir_svml_n0_1_int_b, mod_ml_dir_svmp_n0_1_int_b, mod_ml_dir_svmr_n0_1_int_b,
+             mod_ml_dir_glm_n1_5_int_b, mod_ml_dir_rf_n1_5_int_b, mod_ml_dir_bayes_n1_5_int_b, 
+             mod_ml_dir_boost_n1_5_int_b, mod_ml_dir_svml_n1_5_int_b, mod_ml_dir_svmp_n1_5_int_b, mod_ml_dir_svmr_n1_5_int_b,
+             mod_ml_dir_glm_all0_1_int_b, mod_ml_dir_rf_all0_1_int_b, mod_ml_dir_bayes_all0_1_int_b, 
+             mod_ml_dir_boost_all0_1_int_b, mod_ml_dir_svml_all0_1_int_b, mod_ml_dir_svmp_all0_1_int_b, mod_ml_dir_svmr_all0_1_int_b, 
+             mod_ml_dir_glm_all1_5_int_b, mod_ml_dir_rf_all1_5_int_b, mod_ml_dir_bayes_all1_5_int_b, 
+             mod_ml_dir_boost_all1_5_int_b, mod_ml_dir_svml_all1_5_int_b, mod_ml_dir_svmp_all1_5_int_b, mod_ml_dir_svmr_all1_5_int_b)
+
+ml_better_dir <- c(mod_ml_dir_glm_fin_better, mod_ml_dir_rf_fin_better, mod_ml_dir_bayes_fin_better, 
+               mod_ml_dir_boost_fin_better, mod_ml_dir_svml_fin_better, mod_ml_dir_svmp_fin_better, mod_ml_dir_svmr_fin_better, 
+               mod_ml_dir_glm_n0_1_better, mod_ml_dir_rf_n0_1_better, mod_ml_dir_bayes_n0_1_better, 
+               mod_ml_dir_boost_n0_1_better, mod_ml_dir_svml_n0_1_better, mod_ml_dir_svmp_n0_1_better, mod_ml_dir_svmr_n0_1_better,
+               mod_ml_dir_glm_n1_5_better, mod_ml_dir_rf_n1_5_better, mod_ml_dir_bayes_n1_5_better, 
+               mod_ml_dir_boost_n1_5_better, mod_ml_dir_svml_n1_5_better, mod_ml_dir_svmp_n1_5_better, mod_ml_dir_svmr_n1_5_better,
+               mod_ml_dir_glm_all0_1_better, mod_ml_dir_rf_all0_1_better, mod_ml_dir_bayes_all0_1_better, 
+               mod_ml_dir_boost_all0_1_better, mod_ml_dir_svml_all0_1_better, mod_ml_dir_svmp_all0_1_better, mod_ml_dir_svmr_all0_1_better, 
+               mod_ml_dir_glm_all1_5_better, mod_ml_dir_rf_all1_5_better, mod_ml_dir_bayes_all1_5_better, 
+               mod_ml_dir_boost_all1_5_better, mod_ml_dir_svml_all1_5_better, mod_ml_dir_svmp_all1_5_better, mod_ml_dir_svmr_all1_5_better)
+ml_type_dir <- c('Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial', 
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial')
+
+table_ml_dir <- data.frame(ml_type_dir, ml_sd_a_dir, ml_sd_b_dir, ml_accuracy_dir, ml_better_dir)
+
+rownames(table_ml_dir)[1] <- 'Использование только финансовой нформации'
+rownames(table_ml_dir)[8] <- 'Использование только новостной информации (текущая)'
+rownames(table_ml_dir)[15] <- 'Использование лагированной новостной информации'
+rownames(table_ml_dir)[22] <- 'Оба канала информации (текущая)'
+rownames(table_ml_dir)[29] <- 'Оба канала информации (новости ланированные)'
+
+table_ml_dir$ml_sd_a_dir <- round(table_ml_dir$ml_sd_a_dir, 4)
+table_ml_dir$ml_sd_b_dir <- round(table_ml_dir$ml_sd_b_dir, 4)
+table_ml_dir$ml_accuracy_dir <- round(table_ml_dir$ml_accuracy_dir, 4)
+
+table_ml_dir
+
+#Выгрузим
+table_ml_dir_done_bmw <- table_ml_dir %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование методов машинного обучения для классификации доходностей на разных источниках данных по словарям Дирихле")
+  ) 
+gtsave(table_ml_dir_done_bmw, filename = 'table_ml_dir_done_bmw.html')
+
+
+#### Теперь классификация больших доходностей ####
+k <- median(abs(bmw_dir_ok_lag$bmw_y_ok))
+bmw_dir_ok_lag$big <- ifelse(abs(bmw_dir_ok_lag$bmw_y_ok) > k, 1, 0)
+sum(bmw_dir_ok_lag$big)
+bmw_dir_ok_lag$big <- as.factor(bmw_dir_ok_lag$big)
+head(bmw_dir_ok_lag)
+
+#Модели только на финансах - 2 лага 
+set.seed(1234) #логит
+mod_b_ml_dir_glm_fin <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,44:45],  method = "glmnet", trControl = Control)
+best_b_dir_glm_fin <- print.train(mod_b_ml_dir_glm_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_glm_f <- mod_b_ml_dir_glm_fin$resample$Accuracy
+mod_b_ml_dir_glm_fin_acc <- mod_b_ml_dir_glm_fin$results[best_b_dir_glm_fin[,5] == "*", 3]
+mod_b_ml_dir_glm_fin_sd <- mod_b_ml_dir_glm_fin$results[best_b_dir_glm_fin[,5] == "*", 5]
+mod_b_ml_dir_glm_fin_int_a <- mod_b_ml_dir_glm_fin_acc - (1.645 * mod_b_ml_dir_glm_fin_sd)
+mod_b_ml_dir_glm_fin_int_b <- mod_b_ml_dir_glm_fin_acc + (1.645 * mod_b_ml_dir_glm_fin_sd)
+mod_b_ml_dir_glm_fin_better <- ifelse(mod_b_ml_dir_glm_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_dir_rf_fin <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,44:45],  method = "rf", trControl = Control)
+best_b_dir_rf_fin <-print.train(mod_b_ml_dir_rf_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_rf_f <- mod_b_ml_dir_rf_fin$resample$Accuracy
+mod_b_ml_dir_rf_fin_acc <- mod_b_ml_dir_rf_fin$results$Accuracy
+mod_b_ml_dir_rf_fin_sd <- mod_b_ml_dir_rf_fin$results$AccuracySD
+mod_b_ml_dir_rf_fin_int_a <- mod_b_ml_dir_rf_fin_acc - (1.645 * mod_b_ml_dir_rf_fin_sd)
+mod_b_ml_dir_rf_fin_int_b <- mod_b_ml_dir_rf_fin_acc + (1.645 * mod_b_ml_dir_rf_fin_sd)
+mod_b_ml_dir_rf_fin_better <- ifelse(mod_b_ml_dir_rf_fin_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_dir_bayes_fin <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,44:45],  method = "naive_bayes", trControl = Control)
+best_b_dir_bayes_fin <- print.train(mod_b_ml_dir_bayes_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_bayes_f <- mod_b_ml_dir_bayes_fin$resample$Accuracy
+mod_b_ml_dir_bayes_fin_acc <- mod_b_ml_dir_bayes_fin$results[best_b_dir_bayes_fin[,4] == "*", 4]
+mod_b_ml_dir_bayes_fin_sd <- mod_b_ml_dir_bayes_fin$results[best_b_dir_bayes_fin[,4] == "*", 6]
+mod_b_ml_dir_bayes_fin_int_a <- mod_b_ml_dir_bayes_fin_acc - (1.645 * mod_b_ml_dir_bayes_fin_sd)
+mod_b_ml_dir_bayes_fin_int_b <- mod_b_ml_dir_bayes_fin_acc + (1.645 * mod_b_ml_dir_bayes_fin_sd)
+mod_b_ml_dir_bayes_fin_better <- ifelse(mod_b_ml_dir_bayes_fin_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_dir_boost_fin <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,44:45],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_dir_boost_fin <- print.train(mod_b_ml_dir_boost_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_boost_f <- mod_b_ml_dir_boost_fin$resample$Accuracy
+mod_b_ml_dir_boost_fin_acc <- mod_b_ml_dir_boost_fin$results[best_b_dir_boost_fin[,5] == "*", 5]
+mod_b_ml_dir_boost_fin_sd <- mod_b_ml_dir_boost_fin$results[best_b_dir_boost_fin[,5] == "*", 7]
+mod_b_ml_dir_boost_fin_int_a <- mod_b_ml_dir_boost_fin_acc - (1.645 * mod_b_ml_dir_boost_fin_sd)
+mod_b_ml_dir_boost_fin_int_b <- mod_b_ml_dir_boost_fin_acc + (1.645 * mod_b_ml_dir_boost_fin_sd)
+mod_b_ml_dir_boost_fin_better <- ifelse(mod_b_ml_dir_boost_fin_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_dir_svml_fin <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,44:45],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_dir_svml_fin <- print.train(mod_b_ml_dir_svml_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svml_f <- mod_b_ml_dir_svml_fin$resample$Accuracy
+mod_b_ml_dir_svml_fin_acc <- mod_b_ml_dir_svml_fin$results$Accuracy
+mod_b_ml_dir_svml_fin_sd <- mod_b_ml_dir_svml_fin$results$AccuracySD
+mod_b_ml_dir_svml_fin_int_a <- mod_b_ml_dir_svml_fin_acc - (1.645 * mod_b_ml_dir_svml_fin_sd)
+mod_b_ml_dir_svml_fin_int_b <- mod_b_ml_dir_svml_fin_acc + (1.645 * mod_b_ml_dir_svml_fin_sd)
+mod_b_ml_dir_svml_fin_better <- ifelse(mod_b_ml_dir_svml_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmp_fin <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,44:45],  method = "svmPoly", 
+                                tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_dir_svmp_fin <- print.train(mod_b_ml_dir_svmp_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmp_f <- mod_b_ml_dir_svmp_fin$resample$Accuracy
+mod_b_ml_dir_svmp_fin_acc <- mod_b_ml_dir_svmp_fin$results[best_b_dir_svmp_fin[,6] == "*", 4]
+mod_b_ml_dir_svmp_fin_sd <- mod_b_ml_dir_svmp_fin$results[best_b_dir_svmp_fin[,6] == "*", 6]
+mod_b_ml_dir_svmp_fin_int_a <- mod_b_ml_dir_svmp_fin_acc - (1.645 * mod_b_ml_dir_svmp_fin_sd)
+mod_b_ml_dir_svmp_fin_int_b <- mod_b_ml_dir_svmp_fin_acc + (1.645 * mod_b_ml_dir_svmp_fin_sd)
+mod_b_ml_dir_svmp_fin_better <- ifelse(mod_b_ml_dir_svmp_fin_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmr_fin <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,44:45],  method = "svmRadial", 
+                                tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_dir_svmr_fin <- print.train(mod_b_ml_dir_svmr_fin, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmr_f <- mod_b_ml_dir_svmr_fin$resample$Accuracy
+mod_b_ml_dir_svmr_fin_acc <- mod_b_ml_dir_svmr_fin$results[best_b_dir_svmr_fin[,4] == "*", 3]
+mod_b_ml_dir_svmr_fin_sd <- mod_b_ml_dir_svmr_fin$results[best_b_dir_svmr_fin[,4] == "*", 5]
+mod_b_ml_dir_svmr_fin_int_a <- mod_b_ml_dir_svmr_fin_acc - (1.645 * mod_b_ml_dir_svmr_fin_sd)
+mod_b_ml_dir_svmr_fin_int_b <- mod_b_ml_dir_svmr_fin_acc + (1.645 * mod_b_ml_dir_svmr_fin_sd)
+mod_b_ml_dir_svmr_fin_better <- ifelse(mod_b_ml_dir_svmr_fin_int_a > 0.5, '+', '-')
+
+Comp_fin_dir <- resamples(list(bayes = mod_b_ml_dir_bayes_fin,
+                           logit = mod_b_ml_dir_glm_fin,
+                           rf = mod_b_ml_dir_rf_fin,
+                           boost = mod_b_ml_dir_boost_fin,
+                           svm_lin = mod_b_ml_dir_svml_fin, 
+                           svm_poly = mod_b_ml_dir_svmp_fin, 
+                           svm_rad = mod_b_ml_dir_svmr_fin))
+
+bwplot(Comp_fin_dir, metric="Accuracy")  
+
+#Модели только на текущих текстах 
+set.seed(1234) #логит
+mod_b_ml_dir_glm_n0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,4:13],  method = "glmnet", trControl = Control)
+best_b_dir_glm_n0_1 <- print.train(mod_b_ml_dir_glm_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_glm_n_0_1 <- mod_b_ml_dir_glm_n0_1$resample$Accuracy
+mod_b_ml_dir_glm_n0_1_acc <- mod_b_ml_dir_glm_n0_1$results[best_b_dir_glm_n0_1[,5] == "*", 3]
+mod_b_ml_dir_glm_n0_1_sd <- mod_b_ml_dir_glm_n0_1$results[best_b_dir_glm_n0_1[,5] == "*", 5]
+mod_b_ml_dir_glm_n0_1_int_a <- mod_b_ml_dir_glm_n0_1_acc - (1.645 * mod_b_ml_dir_glm_n0_1_sd)
+mod_b_ml_dir_glm_n0_1_int_b <- mod_b_ml_dir_glm_n0_1_acc + (1.645 * mod_b_ml_dir_glm_n0_1_sd)
+mod_b_ml_dir_glm_n0_1_better <- ifelse(mod_b_ml_dir_glm_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_dir_rf_n0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,4:13],  method = "rf", trControl = Control)
+best_b_dir_rf_n0_1 <-print.train(mod_b_ml_dir_rf_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_rf_n_0_1 <- mod_b_ml_dir_rf_n0_1$resample$Accuracy
+mod_b_ml_dir_rf_n0_1_acc <- mod_b_ml_dir_rf_n0_1$results[best_b_dir_rf_n0_1[,4] == "*", 2]
+mod_b_ml_dir_rf_n0_1_sd <- mod_b_ml_dir_rf_n0_1$results[best_b_dir_rf_n0_1[,4] == "*", 4]
+mod_b_ml_dir_rf_n0_1_int_a <- mod_b_ml_dir_rf_n0_1_acc - (1.645 * mod_b_ml_dir_rf_n0_1_sd)
+mod_b_ml_dir_rf_n0_1_int_b <- mod_b_ml_dir_rf_n0_1_acc + (1.645 * mod_b_ml_dir_rf_n0_1_sd)
+mod_b_ml_dir_rf_n0_1_better <- ifelse(mod_b_ml_dir_rf_n0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_dir_bayes_n0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,4:13],  method = "naive_bayes", trControl = Control)
+best_b_dir_bayes_n0_1 <- print.train(mod_b_ml_dir_bayes_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_bayes_n_0_1 <- mod_b_ml_dir_bayes_n0_1$resample$Accuracy
+mod_b_ml_dir_bayes_n0_1_acc <- mod_b_ml_dir_bayes_n0_1$results[best_b_dir_bayes_n0_1[,4] == "*", 4]
+mod_b_ml_dir_bayes_n0_1_sd <- mod_b_ml_dir_bayes_n0_1$results[best_b_dir_bayes_n0_1[,4] == "*", 6]
+mod_b_ml_dir_bayes_n0_1_int_a <- mod_b_ml_dir_bayes_n0_1_acc - (1.645 * mod_b_ml_dir_bayes_n0_1_sd)
+mod_b_ml_dir_bayes_n0_1_int_b <- mod_b_ml_dir_bayes_n0_1_acc + (1.645 * mod_b_ml_dir_bayes_n0_1_sd)
+mod_b_ml_dir_bayes_n0_1_better <- ifelse(mod_b_ml_dir_bayes_n0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_dir_boost_n0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,4:13],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_dir_boost_n0_1 <- print.train(mod_b_ml_dir_boost_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_boost_n_0_1 <- mod_b_ml_dir_boost_n0_1$resample$Accuracy
+mod_b_ml_dir_boost_n0_1_acc <- mod_b_ml_dir_boost_n0_1$results[best_b_dir_boost_n0_1[,5] == "*", 5]
+mod_b_ml_dir_boost_n0_1_sd <- mod_b_ml_dir_boost_n0_1$results[best_b_dir_boost_n0_1[,5] == "*", 7]
+mod_b_ml_dir_boost_n0_1_int_a <- mod_b_ml_dir_boost_n0_1_acc - (1.645 * mod_b_ml_dir_boost_n0_1_sd)
+mod_b_ml_dir_boost_n0_1_int_b <- mod_b_ml_dir_boost_n0_1_acc + (1.645 * mod_b_ml_dir_boost_n0_1_sd)
+mod_b_ml_dir_boost_n0_1_better <- ifelse(mod_b_ml_dir_boost_n0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_dir_svml_n0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,4:13],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_dir_svml_n0_1 <- print.train(mod_b_ml_dir_svml_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svml_n_0_1 <- mod_b_ml_dir_svml_n0_1$resample$Accuracy
+mod_b_ml_dir_svml_n0_1_acc <- mod_b_ml_dir_svml_n0_1$results$Accuracy
+mod_b_ml_dir_svml_n0_1_sd <- mod_b_ml_dir_svml_n0_1$results$AccuracySD
+mod_b_ml_dir_svml_n0_1_int_a <- mod_b_ml_dir_svml_n0_1_acc - (1.645 * mod_b_ml_dir_svml_n0_1_sd)
+mod_b_ml_dir_svml_n0_1_int_b <- mod_b_ml_dir_svml_n0_1_acc + (1.645 * mod_b_ml_dir_svml_n0_1_sd)
+mod_b_ml_dir_svml_n0_1_better <- ifelse(mod_b_ml_dir_svml_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmp_n0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,4:13],  method = "svmPoly", 
+                                 tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_dir_svmp_n0_1 <- print.train(mod_b_ml_dir_svmp_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmp_n_0_1 <- mod_b_ml_dir_svmp_n0_1$resample$Accuracy
+mod_b_ml_dir_svmp_n0_1_acc <- mod_b_ml_dir_svmp_n0_1$results[best_b_dir_svmp_n0_1[,6] == "*", 4]
+mod_b_ml_dir_svmp_n0_1_sd <- mod_b_ml_dir_svmp_n0_1$results[best_b_dir_svmp_n0_1[,6] == "*", 6]
+mod_b_ml_dir_svmp_n0_1_int_a <- mod_b_ml_dir_svmp_n0_1_acc - (1.645 * mod_b_ml_dir_svmp_n0_1_sd)
+mod_b_ml_dir_svmp_n0_1_int_b <- mod_b_ml_dir_svmp_n0_1_acc + (1.645 * mod_b_ml_dir_svmp_n0_1_sd)
+mod_b_ml_dir_svmp_n0_1_better <- ifelse(mod_b_ml_dir_svmp_n0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmr_n0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,4:13],  method = "svmRadial", 
+                                 tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_dir_svmr_n0_1 <- print.train(mod_b_ml_dir_svmr_n0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmr_n_0_1 <- mod_b_ml_dir_svmr_n0_1$resample$Accuracy
+mod_b_ml_dir_svmr_n0_1_acc <- mod_b_ml_dir_svmr_n0_1$results[best_b_dir_svmr_n0_1[,4] == "*", 3]
+mod_b_ml_dir_svmr_n0_1_sd <- mod_b_ml_dir_svmr_n0_1$results[best_b_dir_svmr_n0_1[,4] == "*", 5]
+mod_b_ml_dir_svmr_n0_1_int_a <- mod_b_ml_dir_svmr_n0_1_acc - (1.645 * mod_b_ml_dir_svmr_n0_1_sd)
+mod_b_ml_dir_svmr_n0_1_int_b <- mod_b_ml_dir_svmr_n0_1_acc + (1.645 * mod_b_ml_dir_svmr_n0_1_sd)
+mod_b_ml_dir_svmr_n0_1_better <- ifelse(mod_b_ml_dir_svmr_n0_1_int_a > 0.5, '+', '-')
+
+Comp_n0_1_dir <- resamples(list(bayes = mod_b_ml_dir_bayes_n0_1,
+                            logit = mod_b_ml_dir_glm_n0_1,
+                            rf = mod_b_ml_dir_rf_n0_1,
+                            boost = mod_b_ml_dir_boost_n0_1,
+                            svm_lin = mod_b_ml_dir_svml_n0_1, 
+                            svm_poly = mod_b_ml_dir_svmp_n0_1, 
+                            svm_rad = mod_b_ml_dir_svmr_n0_1))
+
+bwplot(Comp_n0_1_dir, metric="Accuracy")  
+
+#Прошлые новости 
+set.seed(1234) #логит
+mod_b_ml_dir_glm_n1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,14:43],  method = "glmnet", trControl = Control)
+best_b_dir_glm_n1_5 <- print.train(mod_b_ml_dir_glm_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_glm_n_1_5 <- mod_b_ml_dir_glm_n1_5$resample$Accuracy
+mod_b_ml_dir_glm_n1_5_acc <- mod_b_ml_dir_glm_n1_5$results[best_b_dir_glm_n1_5[,5] == "*", 3]
+mod_b_ml_dir_glm_n1_5_sd <- mod_b_ml_dir_glm_n1_5$results[best_b_dir_glm_n1_5[,5] == "*", 5]
+mod_b_ml_dir_glm_n1_5_int_a <- mod_b_ml_dir_glm_n1_5_acc - (1.645 * mod_b_ml_dir_glm_n1_5_sd)
+mod_b_ml_dir_glm_n1_5_int_b <- mod_b_ml_dir_glm_n1_5_acc + (1.645 * mod_b_ml_dir_glm_n1_5_sd)
+mod_b_ml_dir_glm_n1_5_better <- ifelse(mod_b_ml_dir_glm_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_dir_rf_n1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,14:43],  method = "rf", trControl = Control)
+best_b_dir_rf_n1_5 <-print.train(mod_b_ml_dir_rf_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_rf_n_1_5 <- mod_b_ml_dir_rf_n1_5$resample$Accuracy
+mod_b_ml_dir_rf_n1_5_acc <- mod_b_ml_dir_rf_n1_5$results[best_b_dir_rf_n1_5[,4] == "*", 2]
+mod_b_ml_dir_rf_n1_5_sd <- mod_b_ml_dir_rf_n1_5$results[best_b_dir_rf_n1_5[,4] == "*", 4]
+mod_b_ml_dir_rf_n1_5_int_a <- mod_b_ml_dir_rf_n1_5_acc - (1.645 * mod_b_ml_dir_rf_n1_5_sd)
+mod_b_ml_dir_rf_n1_5_int_b <- mod_b_ml_dir_rf_n1_5_acc + (1.645 * mod_b_ml_dir_rf_n1_5_sd)
+mod_b_ml_dir_rf_n1_5_better <- ifelse(mod_b_ml_dir_rf_n1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_dir_bayes_n1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,14:43],  method = "naive_bayes", trControl = Control)
+best_b_dir_bayes_n1_5 <- print.train(mod_b_ml_dir_bayes_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_bayes_n_1_5 <- mod_b_ml_dir_bayes_n1_5$resample$Accuracy
+mod_b_ml_dir_bayes_n1_5_acc <- mod_b_ml_dir_bayes_n1_5$results[best_b_dir_bayes_n1_5[,4] == "*", 4]
+mod_b_ml_dir_bayes_n1_5_sd <- mod_b_ml_dir_bayes_n1_5$results[best_b_dir_bayes_n1_5[,4] == "*", 6]
+mod_b_ml_dir_bayes_n1_5_int_a <- mod_b_ml_dir_bayes_n1_5_acc - (1.645 * mod_b_ml_dir_bayes_n1_5_sd)
+mod_b_ml_dir_bayes_n1_5_int_b <- mod_b_ml_dir_bayes_n1_5_acc + (1.645 * mod_b_ml_dir_bayes_n1_5_sd)
+mod_b_ml_dir_bayes_n1_5_better <- ifelse(mod_b_ml_dir_bayes_n1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_dir_boost_n1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,14:43],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_dir_boost_n1_5 <- print.train(mod_b_ml_dir_boost_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_boost_n_1_5 <- mod_b_ml_dir_boost_n1_5$resample$Accuracy
+mod_b_ml_dir_boost_n1_5_acc <- mod_b_ml_dir_boost_n1_5$results[best_b_dir_boost_n1_5[,5] == "*", 5]
+mod_b_ml_dir_boost_n1_5_sd <- mod_b_ml_dir_boost_n1_5$results[best_b_dir_boost_n1_5[,5] == "*", 7]
+mod_b_ml_dir_boost_n1_5_int_a <- mod_b_ml_dir_boost_n1_5_acc - (1.645 * mod_b_ml_dir_boost_n1_5_sd)
+mod_b_ml_dir_boost_n1_5_int_b <- mod_b_ml_dir_boost_n1_5_acc + (1.645 * mod_b_ml_dir_boost_n1_5_sd)
+mod_b_ml_dir_boost_n1_5_better <- ifelse(mod_b_ml_dir_boost_n1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_dir_svml_n1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,14:43],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_dir_svml_n1_5 <- print.train(mod_b_ml_dir_svml_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svml_n_1_5 <- mod_b_ml_dir_svml_n1_5$resample$Accuracy
+mod_b_ml_dir_svml_n1_5_acc <- mod_b_ml_dir_svml_n1_5$results$Accuracy
+mod_b_ml_dir_svml_n1_5_sd <- mod_b_ml_dir_svml_n1_5$results$AccuracySD
+mod_b_ml_dir_svml_n1_5_int_a <- mod_b_ml_dir_svml_n1_5_acc - (1.645 * mod_b_ml_dir_svml_n1_5_sd)
+mod_b_ml_dir_svml_n1_5_int_b <- mod_b_ml_dir_svml_n1_5_acc + (1.645 * mod_b_ml_dir_svml_n1_5_sd)
+mod_b_ml_dir_svml_n1_5_better <- ifelse(mod_b_ml_dir_svml_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmp_n1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,14:43],  method = "svmPoly", 
+                                 tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_dir_svmp_n1_5 <- print.train(mod_b_ml_dir_svmp_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmp_n_1_5 <- mod_b_ml_dir_svmp_n1_5$resample$Accuracy
+mod_b_ml_dir_svmp_n1_5_acc <- mod_b_ml_dir_svmp_n1_5$results[best_b_dir_svmp_n1_5[,6] == "*", 4]
+mod_b_ml_dir_svmp_n1_5_sd <- mod_b_ml_dir_svmp_n1_5$results[best_b_dir_svmp_n1_5[,6] == "*", 6]
+mod_b_ml_dir_svmp_n1_5_int_a <- mod_b_ml_dir_svmp_n1_5_acc - (1.645 * mod_b_ml_dir_svmp_n1_5_sd)
+mod_b_ml_dir_svmp_n1_5_int_b <- mod_b_ml_dir_svmp_n1_5_acc + (1.645 * mod_b_ml_dir_svmp_n1_5_sd)
+mod_b_ml_dir_svmp_n1_5_better <- ifelse(mod_b_ml_dir_svmp_n1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmr_n1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,14:43],  method = "svmRadial", 
+                                 tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_dir_svmr_n1_5 <- print.train(mod_b_ml_dir_svmr_n1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmr_n_1_5 <- mod_b_ml_dir_svmr_n1_5$resample$Accuracy
+mod_b_ml_dir_svmr_n1_5_acc <- mod_b_ml_dir_svmr_n1_5$results[best_b_dir_svmr_n1_5[,4] == "*", 3]
+mod_b_ml_dir_svmr_n1_5_sd <- mod_b_ml_dir_svmr_n1_5$results[best_b_dir_svmr_n1_5[,4] == "*", 5]
+mod_b_ml_dir_svmr_n1_5_int_a <- mod_b_ml_dir_svmr_n1_5_acc - (1.645 * mod_b_ml_dir_svmr_n1_5_sd)
+mod_b_ml_dir_svmr_n1_5_int_b <- mod_b_ml_dir_svmr_n1_5_acc + (1.645 * mod_b_ml_dir_svmr_n1_5_sd)
+mod_b_ml_dir_svmr_n1_5_better <- ifelse(mod_b_ml_dir_svmr_n1_5_int_a > 0.5, '+', '-')
+
+Comp_n1_5_dir <- resamples(list(bayes = mod_b_ml_dir_bayes_n1_5,
+                            logit = mod_b_ml_dir_glm_n1_5,
+                            rf = mod_b_ml_dir_rf_n1_5,
+                            boost = mod_b_ml_dir_boost_n1_5,
+                            svm_lin = mod_b_ml_dir_svml_n1_5, 
+                            svm_poly = mod_b_ml_dir_svmp_n1_5, 
+                            svm_rad = mod_b_ml_dir_svmr_n1_5))
+
+bwplot(Comp_n1_5_dir, metric="Accuracy")  
+
+#Лаги и новости текущие 
+set.seed(1234) #логит
+mod_b_ml_dir_glm_all0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "glmnet", trControl = Control)
+best_b_dir_glm_all0_1 <- print.train(mod_b_ml_dir_glm_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_glm_all_0_1 <- mod_b_ml_dir_glm_all0_1$resample$Accuracy
+mod_b_ml_dir_glm_all0_1_acc <- mod_b_ml_dir_glm_all0_1$results[best_b_dir_glm_all0_1[,5] == "*", 3]
+mod_b_ml_dir_glm_all0_1_sd <- mod_b_ml_dir_glm_all0_1$results[best_b_dir_glm_all0_1[,5] == "*", 5]
+mod_b_ml_dir_glm_all0_1_int_a <- mod_b_ml_dir_glm_all0_1_acc - (1.645 * mod_b_ml_dir_glm_all0_1_sd)
+mod_b_ml_dir_glm_all0_1_int_b <- mod_b_ml_dir_glm_all0_1_acc + (1.645 * mod_b_ml_dir_glm_all0_1_sd)
+mod_b_ml_dir_glm_all0_1_better <- ifelse(mod_b_ml_dir_glm_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_dir_rf_all0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "rf", trControl = Control)
+best_b_dir_rf_all0_1 <-print.train(mod_b_ml_dir_rf_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_rf_all_0_1 <- mod_b_ml_dir_rf_all0_1$resample$Accuracy
+mod_b_ml_dir_rf_all0_1_acc <- mod_b_ml_dir_rf_all0_1$results[best_b_dir_rf_all0_1[,4] == "*", 2]
+mod_b_ml_dir_rf_all0_1_sd <- mod_b_ml_dir_rf_all0_1$results[best_b_dir_rf_all0_1[,4] == "*", 4]
+mod_b_ml_dir_rf_all0_1_int_a <- mod_b_ml_dir_rf_all0_1_acc - (1.645 * mod_b_ml_dir_rf_all0_1_sd)
+mod_b_ml_dir_rf_all0_1_int_b <- mod_b_ml_dir_rf_all0_1_acc + (1.645 * mod_b_ml_dir_rf_all0_1_sd)
+mod_b_ml_dir_rf_all0_1_better <- ifelse(mod_b_ml_dir_rf_all0_1_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_dir_bayes_all0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "naive_bayes", trControl = Control)
+best_b_dir_bayes_all0_1 <- print.train(mod_b_ml_dir_bayes_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_bayes_all_0_1 <- mod_b_ml_dir_bayes_all0_1$resample$Accuracy
+mod_b_ml_dir_bayes_all0_1_acc <- mod_b_ml_dir_bayes_all0_1$results[best_b_dir_bayes_all0_1[,4] == "*", 4]
+mod_b_ml_dir_bayes_all0_1_sd <- mod_b_ml_dir_bayes_all0_1$results[best_b_dir_bayes_all0_1[,4] == "*", 6]
+mod_b_ml_dir_bayes_all0_1_int_a <- mod_b_ml_dir_bayes_all0_1_acc - (1.645 * mod_b_ml_dir_bayes_all0_1_sd)
+mod_b_ml_dir_bayes_all0_1_int_b <- mod_b_ml_dir_bayes_all0_1_acc + (1.645 * mod_b_ml_dir_bayes_all0_1_sd)
+mod_b_ml_dir_bayes_all0_1_better <- ifelse(mod_b_ml_dir_bayes_all0_1_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_dir_boost_all0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_dir_boost_all0_1 <- print.train(mod_b_ml_dir_boost_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_boost_all_0_1 <- mod_b_ml_dir_boost_all0_1$resample$Accuracy
+mod_b_ml_dir_boost_all0_1_acc <- mod_b_ml_dir_boost_all0_1$results[best_b_dir_boost_all0_1[,5] == "*", 5]
+mod_b_ml_dir_boost_all0_1_sd <- mod_b_ml_dir_boost_all0_1$results[best_b_dir_boost_all0_1[,5] == "*", 7]
+mod_b_ml_dir_boost_all0_1_int_a <- mod_b_ml_dir_boost_all0_1_acc - (1.645 * mod_b_ml_dir_boost_all0_1_sd)
+mod_b_ml_dir_boost_all0_1_int_b <- mod_b_ml_dir_boost_all0_1_acc + (1.645 * mod_b_ml_dir_boost_all0_1_sd)
+mod_b_ml_dir_boost_all0_1_better <- ifelse(mod_b_ml_dir_boost_all0_1_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_dir_svml_all0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_dir_svml_all0_1 <- print.train(mod_b_ml_dir_svml_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svml_all_0_1 <- mod_b_ml_dir_svml_all0_1$resample$Accuracy
+mod_b_ml_dir_svml_all0_1_acc <- mod_b_ml_dir_svml_all0_1$results$Accuracy
+mod_b_ml_dir_svml_all0_1_sd <- mod_b_ml_dir_svml_all0_1$results$AccuracySD
+mod_b_ml_dir_svml_all0_1_int_a <- mod_b_ml_dir_svml_all0_1_acc - (1.645 * mod_b_ml_dir_svml_all0_1_sd)
+mod_b_ml_dir_svml_all0_1_int_b <- mod_b_ml_dir_svml_all0_1_acc + (1.645 * mod_b_ml_dir_svml_all0_1_sd)
+mod_b_ml_dir_svml_all0_1_better <- ifelse(mod_b_ml_dir_svml_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmp_all0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "svmPoly", 
+                                   tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_dir_svmp_all0_1 <- print.train(mod_b_ml_dir_svmp_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmp_all_0_1 <- mod_b_ml_dir_svmp_all0_1$resample$Accuracy
+mod_b_ml_dir_svmp_all0_1_acc <- mod_b_ml_dir_svmp_all0_1$results[best_b_dir_svmp_all0_1[,6] == "*", 4]
+mod_b_ml_dir_svmp_all0_1_sd <- mod_b_ml_dir_svmp_all0_1$results[best_b_dir_svmp_all0_1[,6] == "*", 6]
+mod_b_ml_dir_svmp_all0_1_int_a <- mod_b_ml_dir_svmp_all0_1_acc - (1.645 * mod_b_ml_dir_svmp_all0_1_sd)
+mod_b_ml_dir_svmp_all0_1_int_b <- mod_b_ml_dir_svmp_all0_1_acc + (1.645 * mod_b_ml_dir_svmp_all0_1_sd)
+mod_b_ml_dir_svmp_all0_1_better <- ifelse(mod_b_ml_dir_svmp_all0_1_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmr_all0_1 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(4:13, 44:45)],  method = "svmRadial", 
+                                   tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_dir_svmr_all0_1 <- print.train(mod_b_ml_dir_svmr_all0_1, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmr_all_0_1 <- mod_b_ml_dir_svmr_all0_1$resample$Accuracy
+mod_b_ml_dir_svmr_all0_1_acc <- mod_b_ml_dir_svmr_all0_1$results[best_b_dir_svmr_all0_1[,4] == "*", 3]
+mod_b_ml_dir_svmr_all0_1_sd <- mod_b_ml_dir_svmr_all0_1$results[best_b_dir_svmr_all0_1[,4] == "*", 5]
+mod_b_ml_dir_svmr_all0_1_int_a <- mod_b_ml_dir_svmr_all0_1_acc - (1.645 * mod_b_ml_dir_svmr_all0_1_sd)
+mod_b_ml_dir_svmr_all0_1_int_b <- mod_b_ml_dir_svmr_all0_1_acc + (1.645 * mod_b_ml_dir_svmr_all0_1_sd)
+mod_b_ml_dir_svmr_all0_1_better <- ifelse(mod_b_ml_dir_svmr_all0_1_int_a > 0.5, '+', '-')
+
+Comp_all0_1_dir <- resamples(list(bayes = mod_b_ml_dir_bayes_all0_1,
+                              logit = mod_b_ml_dir_glm_all0_1,
+                              rf = mod_b_ml_dir_rf_all0_1,
+                              boost = mod_b_ml_dir_boost_all0_1,
+                              svm_lin = mod_b_ml_dir_svml_all0_1, 
+                              svm_poly = mod_b_ml_dir_svmp_all0_1, 
+                              svm_rad = mod_b_ml_dir_svmr_all0_1))
+
+bwplot(Comp_all0_1_dir, metric="Accuracy")
+
+#Новости лагированные и финансы 
+set.seed(1234) #логит
+mod_b_ml_dir_glm_all1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "glmnet", trControl = Control)
+best_b_dir_glm_all1_5 <- print.train(mod_b_ml_dir_glm_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_glm_all_1_5 <- mod_b_ml_dir_glm_all1_5$resample$Accuracy
+mod_b_ml_dir_glm_all1_5_acc <- mod_b_ml_dir_glm_all1_5$results[best_b_dir_glm_all1_5[,5] == "*", 3]
+mod_b_ml_dir_glm_all1_5_sd <- mod_b_ml_dir_glm_all1_5$results[best_b_dir_glm_all1_5[,5] == "*", 5]
+mod_b_ml_dir_glm_all1_5_int_a <- mod_b_ml_dir_glm_all1_5_acc - (1.645 * mod_b_ml_dir_glm_all1_5_sd)
+mod_b_ml_dir_glm_all1_5_int_b <- mod_b_ml_dir_glm_all1_5_acc + (1.645 * mod_b_ml_dir_glm_all1_5_sd)
+mod_b_ml_dir_glm_all1_5_better <- ifelse(mod_b_ml_dir_glm_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+#rf
+mod_b_ml_dir_rf_all1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "rf", trControl = Control)
+best_b_dir_rf_all1_5 <-print.train(mod_b_ml_dir_rf_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_rf_all_1_5 <- mod_b_ml_dir_rf_all1_5$resample$Accuracy
+mod_b_ml_dir_rf_all1_5_acc <- mod_b_ml_dir_rf_all1_5$results[best_b_dir_rf_all1_5[,4] == "*", 2]
+mod_b_ml_dir_rf_all1_5_sd <- mod_b_ml_dir_rf_all1_5$results[best_b_dir_rf_all1_5[,4] == "*", 4]
+mod_b_ml_dir_rf_all1_5_int_a <- mod_b_ml_dir_rf_all1_5_acc - (1.645 * mod_b_ml_dir_rf_all1_5_sd)
+mod_b_ml_dir_rf_all1_5_int_b <- mod_b_ml_dir_rf_all1_5_acc + (1.645 * mod_b_ml_dir_rf_all1_5_sd)
+mod_b_ml_dir_rf_all1_5_better <- ifelse(mod_b_ml_dir_rf_all1_5_int_a > 0.5, '+', '-')
+
+#bayes
+set.seed(1234)
+mod_b_ml_dir_bayes_all1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "naive_bayes", trControl = Control)
+best_b_dir_bayes_all1_5 <- print.train(mod_b_ml_dir_bayes_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_bayes_all_1_5 <- mod_b_ml_dir_bayes_all1_5$resample$Accuracy
+mod_b_ml_dir_bayes_all1_5_acc <- mod_b_ml_dir_bayes_all1_5$results[best_b_dir_bayes_all1_5[,4] == "*", 4]
+mod_b_ml_dir_bayes_all1_5_sd <- mod_b_ml_dir_bayes_all1_5$results[best_b_dir_bayes_all1_5[,4] == "*", 6]
+mod_b_ml_dir_bayes_all1_5_int_a <- mod_b_ml_dir_bayes_all1_5_acc - (1.645 * mod_b_ml_dir_bayes_all1_5_sd)
+mod_b_ml_dir_bayes_all1_5_int_b <- mod_b_ml_dir_bayes_all1_5_acc + (1.645 * mod_b_ml_dir_bayes_all1_5_sd)
+mod_b_ml_dir_bayes_all1_5_better <- ifelse(mod_b_ml_dir_bayes_all1_5_int_a > 0.5, '+', '-')
+
+#Бустинг 
+set.seed(1234)
+mod_b_ml_dir_boost_all1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "gbm",  trControl = Control, verbose = FALSE)
+best_b_dir_boost_all1_5 <- print.train(mod_b_ml_dir_boost_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_boost_all_1_5 <- mod_b_ml_dir_boost_all1_5$resample$Accuracy
+mod_b_ml_dir_boost_all1_5_acc <- mod_b_ml_dir_boost_all1_5$results[best_b_dir_boost_all1_5[,5] == "*", 5]
+mod_b_ml_dir_boost_all1_5_sd <- mod_b_ml_dir_boost_all1_5$results[best_b_dir_boost_all1_5[,5] == "*", 7]
+mod_b_ml_dir_boost_all1_5_int_a <- mod_b_ml_dir_boost_all1_5_acc - (1.645 * mod_b_ml_dir_boost_all1_5_sd)
+mod_b_ml_dir_boost_all1_5_int_b <- mod_b_ml_dir_boost_all1_5_acc + (1.645 * mod_b_ml_dir_boost_all1_5_sd)
+mod_b_ml_dir_boost_all1_5_better <- ifelse(mod_b_ml_dir_boost_all1_5_int_a > 0.5, '+', '-')
+
+#SVM с разными ядрами - method = "svmPoly" - полиномиальное ядро "svmLinear" - линейное ядро  "svmRadial" - радиально базисная фнукция
+set.seed(1234)
+mod_b_ml_dir_svml_all1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "svmLinear", trControl = Control, verbose = FALSE)
+best_b_dir_svml_all1_5 <- print.train(mod_b_ml_dir_svml_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svml_all_1_5 <- mod_b_ml_dir_svml_all1_5$resample$Accuracy
+mod_b_ml_dir_svml_all1_5_acc <- mod_b_ml_dir_svml_all1_5$results$Accuracy
+mod_b_ml_dir_svml_all1_5_sd <- mod_b_ml_dir_svml_all1_5$results$AccuracySD
+mod_b_ml_dir_svml_all1_5_int_a <- mod_b_ml_dir_svml_all1_5_acc - (1.645 * mod_b_ml_dir_svml_all1_5_sd)
+mod_b_ml_dir_svml_all1_5_int_b <- mod_b_ml_dir_svml_all1_5_acc + (1.645 * mod_b_ml_dir_svml_all1_5_sd)
+mod_b_ml_dir_svml_all1_5_better <- ifelse(mod_b_ml_dir_svml_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmp_all1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "svmPoly", 
+                                   tuneLength = 3, trControl = Control, verbose = FALSE)
+best_b_dir_svmp_all1_5 <- print.train(mod_b_ml_dir_svmp_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmp_all_1_5 <- mod_b_ml_dir_svmp_all1_5$resample$Accuracy
+mod_b_ml_dir_svmp_all1_5_acc <- mod_b_ml_dir_svmp_all1_5$results[best_b_dir_svmp_all1_5[,6] == "*", 4]
+mod_b_ml_dir_svmp_all1_5_sd <- mod_b_ml_dir_svmp_all1_5$results[best_b_dir_svmp_all1_5[,6] == "*", 6]
+mod_b_ml_dir_svmp_all1_5_int_a <- mod_b_ml_dir_svmp_all1_5_acc - (1.645 * mod_b_ml_dir_svmp_all1_5_sd)
+mod_b_ml_dir_svmp_all1_5_int_b <- mod_b_ml_dir_svmp_all1_5_acc + (1.645 * mod_b_ml_dir_svmp_all1_5_sd)
+mod_b_ml_dir_svmp_all1_5_better <- ifelse(mod_b_ml_dir_svmp_all1_5_int_a > 0.5, '+', '-')
+
+set.seed(1234)
+mod_b_ml_dir_svmr_all1_5 <- train(y = bmw_dir_ok_lag$big, x = bmw_dir_ok_lag[,c(14:43, 44:45)],  method = "svmRadial", 
+                                   tuneLength = 5, trControl = Control, verbose = FALSE)
+best_b_dir_svmr_all1_5 <- print.train(mod_b_ml_dir_svmr_all1_5, details = TRUE, showSD = TRUE, selectCol = TRUE)
+dir_bmw_b_svmr_all_1_5 <- mod_b_ml_dir_svmr_all1_5$resample$Accuracy
+mod_b_ml_dir_svmr_all1_5_acc <- mod_b_ml_dir_svmr_all1_5$results[best_b_dir_svmr_all1_5[,4] == "*", 3]
+mod_b_ml_dir_svmr_all1_5_sd <- mod_b_ml_dir_svmr_all1_5$results[best_b_dir_svmr_all1_5[,4] == "*", 5]
+mod_b_ml_dir_svmr_all1_5_int_a <- mod_b_ml_dir_svmr_all1_5_acc - (1.645 * mod_b_ml_dir_svmr_all1_5_sd)
+mod_b_ml_dir_svmr_all1_5_int_b <- mod_b_ml_dir_svmr_all1_5_acc + (1.645 * mod_b_ml_dir_svmr_all1_5_sd)
+mod_b_ml_dir_svmr_all1_5_better <- ifelse(mod_b_ml_dir_svmr_all1_5_int_a > 0.5, '+', '-')
+
+Comp_all1_5_dir <- resamples(list(bayes = mod_b_ml_dir_bayes_all1_5,
+                              logit = mod_b_ml_dir_glm_all1_5,
+                              rf = mod_b_ml_dir_rf_all1_5,
+                              boost = mod_b_ml_dir_boost_all1_5,
+                              svm_lin = mod_b_ml_dir_svml_all1_5, 
+                              svm_poly = mod_b_ml_dir_svmp_all1_5, 
+                              svm_rad = mod_b_ml_dir_svmr_all1_5))
+
+bwplot(Comp_all1_5_dir, metric="Accuracy")
+
+#Таблица для этого всего 
+ml_accuracy_b_dir <- c(mod_b_ml_dir_glm_fin_acc, mod_b_ml_dir_rf_fin_acc, mod_b_ml_dir_bayes_fin_acc, 
+                   mod_b_ml_dir_boost_fin_acc, mod_b_ml_dir_svml_fin_acc, mod_b_ml_dir_svmp_fin_acc, mod_b_ml_dir_svmr_fin_acc, 
+                   mod_b_ml_dir_glm_n0_1_acc, mod_b_ml_dir_rf_n0_1_acc, mod_b_ml_dir_bayes_n0_1_acc, 
+                   mod_b_ml_dir_boost_n0_1_acc, mod_b_ml_dir_svml_n0_1_acc, mod_b_ml_dir_svmp_n0_1_acc, mod_b_ml_dir_svmr_n0_1_acc,
+                   mod_b_ml_dir_glm_n1_5_acc, mod_b_ml_dir_rf_n1_5_acc, mod_b_ml_dir_bayes_n1_5_acc, 
+                   mod_b_ml_dir_boost_n1_5_acc, mod_b_ml_dir_svml_n1_5_acc, mod_b_ml_dir_svmp_n1_5_acc, mod_b_ml_dir_svmr_n1_5_acc,
+                   mod_b_ml_dir_glm_all0_1_acc, mod_b_ml_dir_rf_all0_1_acc, mod_b_ml_dir_bayes_all0_1_acc, 
+                   mod_b_ml_dir_boost_all0_1_acc, mod_b_ml_dir_svml_all0_1_acc, mod_b_ml_dir_svmp_all0_1_acc, mod_b_ml_dir_svmr_all0_1_acc, 
+                   mod_b_ml_dir_glm_all1_5_acc, mod_b_ml_dir_rf_all1_5_acc, mod_b_ml_dir_bayes_all1_5_acc, 
+                   mod_b_ml_dir_boost_all1_5_acc, mod_b_ml_dir_svml_all1_5_acc, mod_b_ml_dir_svmp_all1_5_acc, mod_b_ml_dir_svmr_all1_5_acc)
+
+ml_sd_a_b_dir <- c(mod_b_ml_dir_glm_fin_int_a, mod_b_ml_dir_rf_fin_int_a, mod_b_ml_dir_bayes_fin_int_a, 
+               mod_b_ml_dir_boost_fin_int_a, mod_b_ml_dir_svml_fin_int_a, mod_b_ml_dir_svmp_fin_int_a, mod_b_ml_dir_svmr_fin_int_a, 
+               mod_b_ml_dir_glm_n0_1_int_a, mod_b_ml_dir_rf_n0_1_int_a, mod_b_ml_dir_bayes_n0_1_int_a, 
+               mod_b_ml_dir_boost_n0_1_int_a, mod_b_ml_dir_svml_n0_1_int_a, mod_b_ml_dir_svmp_n0_1_int_a, mod_b_ml_dir_svmr_n0_1_int_a,
+               mod_b_ml_dir_glm_n1_5_int_a, mod_b_ml_dir_rf_n1_5_int_a, mod_b_ml_dir_bayes_n1_5_int_a, 
+               mod_b_ml_dir_boost_n1_5_int_a, mod_b_ml_dir_svml_n1_5_int_a, mod_b_ml_dir_svmp_n1_5_int_a, mod_b_ml_dir_svmr_n1_5_int_a,
+               mod_b_ml_dir_glm_all0_1_int_a, mod_b_ml_dir_rf_all0_1_int_a, mod_b_ml_dir_bayes_all0_1_int_a, 
+               mod_b_ml_dir_boost_all0_1_int_a, mod_b_ml_dir_svml_all0_1_int_a, mod_b_ml_dir_svmp_all0_1_int_a, mod_b_ml_dir_svmr_all0_1_int_a, 
+               mod_b_ml_dir_glm_all1_5_int_a, mod_b_ml_dir_rf_all1_5_int_a, mod_b_ml_dir_bayes_all1_5_int_a, 
+               mod_b_ml_dir_boost_all1_5_int_a, mod_b_ml_dir_svml_all1_5_int_a, mod_b_ml_dir_svmp_all1_5_int_a, mod_b_ml_dir_svmr_all1_5_int_a)
+
+ml_sd_b_b_dir <- c(mod_b_ml_dir_glm_fin_int_b, mod_b_ml_dir_rf_fin_int_b, mod_b_ml_dir_bayes_fin_int_b, 
+               mod_b_ml_dir_boost_fin_int_b, mod_b_ml_dir_svml_fin_int_b, mod_b_ml_dir_svmp_fin_int_b, mod_b_ml_dir_svmr_fin_int_b, 
+               mod_b_ml_dir_glm_n0_1_int_b, mod_b_ml_dir_rf_n0_1_int_b, mod_b_ml_dir_bayes_n0_1_int_b, 
+               mod_b_ml_dir_boost_n0_1_int_b, mod_b_ml_dir_svml_n0_1_int_b, mod_b_ml_dir_svmp_n0_1_int_b, mod_b_ml_dir_svmr_n0_1_int_b,
+               mod_b_ml_dir_glm_n1_5_int_b, mod_b_ml_dir_rf_n1_5_int_b, mod_b_ml_dir_bayes_n1_5_int_b, 
+               mod_b_ml_dir_boost_n1_5_int_b, mod_b_ml_dir_svml_n1_5_int_b, mod_b_ml_dir_svmp_n1_5_int_b, mod_b_ml_dir_svmr_n1_5_int_b,
+               mod_b_ml_dir_glm_all0_1_int_b, mod_b_ml_dir_rf_all0_1_int_b, mod_b_ml_dir_bayes_all0_1_int_b, 
+               mod_b_ml_dir_boost_all0_1_int_b, mod_b_ml_dir_svml_all0_1_int_b, mod_b_ml_dir_svmp_all0_1_int_b, mod_b_ml_dir_svmr_all0_1_int_b, 
+               mod_b_ml_dir_glm_all1_5_int_b, mod_b_ml_dir_rf_all1_5_int_b, mod_b_ml_dir_bayes_all1_5_int_b, 
+               mod_b_ml_dir_boost_all1_5_int_b, mod_b_ml_dir_svml_all1_5_int_b, mod_b_ml_dir_svmp_all1_5_int_b, mod_b_ml_dir_svmr_all1_5_int_b)
+
+ml_better_b_dir <- c(mod_b_ml_dir_glm_fin_better, mod_b_ml_dir_rf_fin_better, mod_b_ml_dir_bayes_fin_better, 
+                 mod_b_ml_dir_boost_fin_better, mod_b_ml_dir_svml_fin_better, mod_b_ml_dir_svmp_fin_better, mod_b_ml_dir_svmr_fin_better, 
+                 mod_b_ml_dir_glm_n0_1_better, mod_b_ml_dir_rf_n0_1_better, mod_b_ml_dir_bayes_n0_1_better, 
+                 mod_b_ml_dir_boost_n0_1_better, mod_b_ml_dir_svml_n0_1_better, mod_b_ml_dir_svmp_n0_1_better, mod_b_ml_dir_svmr_n0_1_better,
+                 mod_b_ml_dir_glm_n1_5_better, mod_b_ml_dir_rf_n1_5_better, mod_b_ml_dir_bayes_n1_5_better, 
+                 mod_b_ml_dir_boost_n1_5_better, mod_b_ml_dir_svml_n1_5_better, mod_b_ml_dir_svmp_n1_5_better, mod_b_ml_dir_svmr_n1_5_better,
+                 mod_b_ml_dir_glm_all0_1_better, mod_b_ml_dir_rf_all0_1_better, mod_b_ml_dir_bayes_all0_1_better, 
+                 mod_b_ml_dir_boost_all0_1_better, mod_b_ml_dir_svml_all0_1_better, mod_b_ml_dir_svmp_all0_1_better, mod_b_ml_dir_svmr_all0_1_better, 
+                 mod_b_ml_dir_glm_all1_5_better, mod_b_ml_dir_rf_all1_5_better, mod_b_ml_dir_bayes_all1_5_better, 
+                 mod_b_ml_dir_boost_all1_5_better, mod_b_ml_dir_svml_all1_5_better, mod_b_ml_dir_svmp_all1_5_better, mod_b_ml_dir_svmr_all1_5_better)
+
+ml_type_dir <- c('Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial', 
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial',
+             'Logit', 'Random_forest', 'Bayes_Naive', 'Boosting', 'SVM-Linear', 'SVM-Poly', 'SVM-Radial')
+
+table_ml_dir_b <- data.frame(ml_type_dir, ml_sd_a_b_dir, ml_sd_b_b_dir, ml_accuracy_b_dir, ml_better_b_dir)
+
+
+
+rownames(table_ml_dir_b)[1] <- 'Использование только финансовой нформации'
+rownames(table_ml_dir_b)[8] <- 'Использование только новостной информации (текущая)'
+rownames(table_ml_dir_b)[15] <- 'Использование лагированной новостной информации'
+rownames(table_ml_dir_b)[22] <- 'Оба канала информации (текущая)'
+rownames(table_ml_dir_b)[29] <- 'Оба канала информации (новости ланированные)'
+
+table_ml_dir_b$ml_sd_a_b_dir <- round(table_ml_dir_b$ml_sd_a_b_dir, 4)
+table_ml_dir_b$ml_sd_b_b_dir <- round(table_ml_dir_b$ml_sd_b_b_dir, 4)
+table_ml_dir_b$ml_accuracy_b_dir <- round(table_ml_dir_b$ml_accuracy_b_dir, 4)
+
+table_ml_dir_b
+
+#Выгрузим
+table_ml_dir_done_bmw_big <- table_ml_dir_b %>% 
+  gt(rownames_to_stub = TRUE) %>% 
+  tab_header(
+    title = ("Использование методов машинного обучения для классификации больших доходностей на разных источниках данных с использованием словарей Дирихле")
+  ) 
+gtsave(table_ml_dir_done_bmw_big, filename = 'table_ml_dir_done_bmw_big.html')
