@@ -1,1 +1,4 @@
 # vkr_gorshkova
+
+This paper analyzes the interaction of two information flows: structured, that is, financial, in particular stock quotes and returns, and unstructured, in other words, non-financial, using news posts as an example. As financial sources, data on daily stock quotes of companies in the automotive sector are used, news data is taken from large thematic Telegram channels. As a technical basis, two types of models are used: for processing textual information and sentiment analysis, as well as for analyzing time series and predicting the dynamics of stock prices.
+It is expected that when adding textual information to the forecasting models for the dynamics of stock prices, the accuracy of their predictions will increase, which will indicate the reality of the influence of the news background on the stock market.
